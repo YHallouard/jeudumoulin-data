@@ -1,0 +1,48 @@
+config:
+  strategy: alphazero
+  agent:
+    model:
+      model_type: mlp_dual_net
+      backbone:
+        model_type: mlp_backbone
+      input_dim: 77
+      num_layers: 2
+      hidden_dim: 512
+      output_dim: 256
+      policy_head:
+        model_type: semi_conditional_policy_head
+        state_embedding_dim: 256
+        embedding:
+          model_type: classic_embedding
+          embedding_dim: 32
+        from_head_hidden_dim: 256
+        to_head_hidden_dim: 256
+        remove_head_hidden_dim: 256
+        from_head_dropout_rate: 0
+        to_head_dropout_rate: 0
+        remove_head_dropout_rate: 0
+      value_head:
+        hidden_dim: 512
+        dropout_rate: 0.2
+        output_dim: 1
+    device: mps
+  training:
+    iterations: 100
+    episodes: 10
+    simulations: 2000
+    max_episode_steps: 300
+    epochs: 20
+    replay_buffer_size: 20000
+    batch_size: 128
+    learning_rate: 0.001
+    lr_scheduler_config:
+      model_type: cosine_warm_rest_lr
+      T_0: 20
+      T_mult: 1
+      min_lr: 5e-5
+      last_epoch: -1
+    temperature: 1.0
+    save_frequency: 10
+    eval_frequency: 10
+    save_folder: models/alphazero_light
+    verbose: true

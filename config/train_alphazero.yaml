@@ -1,0 +1,53 @@
+config:
+  strategy: alphazero
+  agent:
+    model:
+      model_type: mlp_dual_net
+      backbone:
+        model_type: graph_conv_backbone
+        player_embedding_dim: 16
+        phase_embedding_dim: 16
+        board_embedding_dim: 128
+        hidden_dim: 256
+        output_dim: 128
+        graph_layer_hidden_dim: 32
+        graph_layer_output_dim: 64
+        num_graph_layers: 3
+        use_attention_pooling: true
+      policy_head:
+        model_type: semi_conditional_policy_head
+        state_embedding_dim: 128
+        embedding:
+          model_type: positional_embedding
+          embedding_dim: 32
+        from_head_hidden_dim: 512
+        to_head_hidden_dim: 512
+        remove_head_hidden_dim: 512
+        from_head_dropout_rate: 0.1
+        to_head_dropout_rate: 0.1
+        remove_head_dropout_rate: 0.1
+      value_head:
+        dropout_rate: 0.3
+        hidden_dim: 128
+        output_dim: 1
+    device: mps
+  training:
+    iterations: 100
+    episodes: 10
+    simulations: 2000
+    max_episode_steps: 300
+    epochs: 30
+    replay_buffer_size: 10000
+    batch_size: 64
+    learning_rate: 0.001
+    lr_scheduler_config:
+      model_type: cosine_warm_rest_lr
+      T_0: 10
+      T_mult: 1
+      min_lr: 5e-5
+      last_epoch: -1
+    temperature: 1.0
+    save_frequency: 10
+    eval_frequency: 10
+    save_folder: models/alphazero
+    verbose: true

@@ -1,0 +1,8 @@
+player1:
+  type: alphazero
+  model_path: models/model_0099.safetensors
+  temperature: 0.0
+  num_simulations: 200
+player2:
+  type: dqn
+  model_path: models/dqn/final_model.safetensors

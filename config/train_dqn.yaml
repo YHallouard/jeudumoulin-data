@@ -1,0 +1,31 @@
+config:
+  strategy: dqn
+  agent:
+    model:
+      model_type: dqn_network
+      backbone:
+        input_dim: 77
+        hidden_dim: 128
+        output_dim: 128
+      q_network:
+        embedding_dim: 32
+        hidden_dim: 256
+        output_dim: 1
+    device: cpu
+  training:
+    episodes: 1000
+    learning_rate: 0.001
+    gamma: 0.99
+    batch_size: 128
+    buffer_size: 10000
+    epsilon_start: 1.0
+    epsilon_end: 0.1
+    epsilon_decay: 0.999
+    opponent: self
+    max_steps: 300
+    use_prioritized_replay: false
+    save_folder: models/dqn
+    save_frequency: 100
+    eval_frequency: 100
+    eval_games: 50
+    verbose: true

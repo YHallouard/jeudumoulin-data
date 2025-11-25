@@ -1,0 +1,17 @@
+config:
+  strategy: alphazero
+  agent:
+    model_path: models/alphazero/
+    device: cpu
+  training:
+    iterations: 100
+    episodes: 10
+    simulations: 3000
+    max_episode_steps: 300
+    epochs: 30
+    replay_buffer_size: 20000
+    batch_size: 64
+    learning_rate: 0.0003
+    temperature: 1.0
+    save_folder: models/alphazero
+    verbose: true
