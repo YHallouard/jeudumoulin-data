@@ -67,3 +67,4 @@ Cargo.lock
 *.ipynb
 
 *.env
+*.pem

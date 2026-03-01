@@ -56,6 +56,7 @@ jobs:
     name: Bump version & Release
     runs-on: ubuntu-22.04
     needs: [guard, validate, release_state]
+    environment: development
     if: needs.guard.outputs.proceed == 'true' && needs.release_state.outputs.will_release == 'true'
     steps:
       - name: Generate token for GitHub App
