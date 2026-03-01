@@ -8,7 +8,12 @@ use indicatif::{ProgressBar, ProgressStyle};
 use crate::game::{Board, Move, Player};
 use crate::search::{Node, MCTS};
 
-type TrainExamplesResult = (Vec<Vec<f32>>, Vec<Vec<Vec<Option<usize>>>>, Vec<Vec<f32>>, Vec<f32>);
+type TrainExamplesResult = (
+    Vec<Vec<f32>>,
+    Vec<Vec<Vec<Option<usize>>>>,
+    Vec<Vec<f32>>,
+    Vec<f32>,
+);
 
 pub struct TrainExample {
     pub state_embedding: Vec<f32>,
