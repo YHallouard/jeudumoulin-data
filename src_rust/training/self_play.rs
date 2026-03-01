@@ -1,12 +1,12 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
-use std::collections::HashMap;
 use rand::Rng;
+use std::collections::HashMap;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::game::{Board, Move, Player};
-use crate::search::{MCTS, Node};
+use crate::search::{Node, MCTS};
 
 pub struct TrainExample {
     pub state_embedding: Vec<f32>,
@@ -37,19 +37,25 @@ impl crate::agent::base::Agent for PythonAgent {
                 .collect();
 
             let py_state_embedding = PyList::new_bound(py, &state_embedding);
-            let py_legal_moves = PyList::new_bound(py,
-                legal_moves_as_lists.iter().map(|m| PyList::new_bound(py, m))
+            let py_legal_moves = PyList::new_bound(
+                py,
+                legal_moves_as_lists
+                    .iter()
+                    .map(|m| PyList::new_bound(py, m)),
             );
 
-            let result = self.agent
+            let result = self
+                .agent
                 .call_method1(py, "predict", (py_state_embedding, py_legal_moves))
                 .expect("Failed to call predict");
 
-            let result_tuple: &Bound<PyTuple> = result.downcast_bound::<PyTuple>(py)
+            let result_tuple: &Bound<PyTuple> = result
+                .downcast_bound::<PyTuple>(py)
                 .expect("Result is not a tuple");
 
             let policy_item = result_tuple.get_item(0).expect("No policy in result");
-            let policy_dict: &Bound<PyDict> = policy_item.downcast::<PyDict>()
+            let policy_dict: &Bound<PyDict> = policy_item
+                .downcast::<PyDict>()
                 .expect("Policy is not a dict");
 
             let value_item = result_tuple.get_item(1).expect("No value in result");
@@ -99,10 +105,8 @@ pub fn execute_episode(
             .map(|m| vec![m.from_position, Some(m.to_position), m.removed_position])
             .collect();
 
-        let mut action_probs: HashMap<Move, f32> = legal_moves
-            .iter()
-            .map(|m| (m.clone(), 0.0))
-            .collect();
+        let mut action_probs: HashMap<Move, f32> =
+            legal_moves.iter().map(|m| (m.clone(), 0.0)).collect();
 
         let total_count: usize = root.children.values().map(|n| n.visit_count).sum();
         if total_count > 0 {
@@ -149,7 +153,9 @@ pub fn execute_episode(
         });
 
         let action = root.select_action(temperature);
-        reused_root = root.children.into_iter()
+        reused_root = root
+            .children
+            .into_iter()
             .find(|(k, _)| k == &action)
             .map(|(_, v)| v);
 
@@ -220,7 +226,12 @@ pub fn generate_train_examples(
     num_episodes: usize,
     max_episode_steps: usize,
     temperature: f64,
-) -> PyResult<(Vec<Vec<f32>>, Vec<Vec<Vec<Option<usize>>>>, Vec<Vec<f32>>, Vec<f32>)> {
+) -> PyResult<(
+    Vec<Vec<f32>>,
+    Vec<Vec<Vec<Option<usize>>>>,
+    Vec<Vec<f32>>,
+    Vec<f32>,
+)> {
     let mut all_state_embeddings: Vec<Vec<f32>> = Vec::new();
     let mut all_legal_moves: Vec<Vec<Vec<Option<usize>>>> = Vec::new();
     let mut all_policy_labels: Vec<Vec<f32>> = Vec::new();

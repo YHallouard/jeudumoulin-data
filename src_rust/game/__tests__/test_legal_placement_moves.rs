@@ -9,7 +9,9 @@ mod tests {
 
         assert_eq!(moves.len(), 24);
         for i in 0..24 {
-            assert!(moves.iter().any(|m| m.from_position.is_none() && m.to_position == i && m.removed_position.is_none()));
+            assert!(moves.iter().any(|m| m.from_position.is_none()
+                && m.to_position == i
+                && m.removed_position.is_none()));
         }
     }
 
@@ -26,8 +28,12 @@ mod tests {
         assert!(!moves.iter().any(|m| m.to_position == 0));
         assert!(!moves.iter().any(|m| m.to_position == 1));
         assert!(!moves.iter().any(|m| m.to_position == 5));
-        assert!(moves.iter().any(|m| m.to_position == 2 && m.removed_position.is_none()));
-        assert!(moves.iter().any(|m| m.to_position == 3 && m.removed_position.is_none()));
+        assert!(moves
+            .iter()
+            .any(|m| m.to_position == 2 && m.removed_position.is_none()));
+        assert!(moves
+            .iter()
+            .any(|m| m.to_position == 3 && m.removed_position.is_none()));
     }
 
     #[test]
@@ -38,7 +44,9 @@ mod tests {
         board.squares[3] = Player::Black;
 
         let moves = board.legal_placement_moves();
-        let removal_move = moves.iter().find(|m| m.to_position == 2 && m.removed_position.is_some());
+        let removal_move = moves
+            .iter()
+            .find(|m| m.to_position == 2 && m.removed_position.is_some());
 
         assert!(removal_move.is_some());
 
@@ -59,7 +67,9 @@ mod tests {
         assert!(board.forms_moulin(&Move::placement(6), Player::White));
 
         let moves = board.legal_placement_moves();
-        let removal_move = moves.iter().find(|m| m.to_position == 6 && m.removed_position.is_some());
+        let removal_move = moves
+            .iter()
+            .find(|m| m.to_position == 6 && m.removed_position.is_some());
 
         assert!(removal_move.is_some());
 
@@ -109,7 +119,11 @@ mod tests {
 
         for m in moulin_moves_to_12 {
             assert_eq!(m.to_position, 12);
-            assert!(m.removed_position == Some(0) || m.removed_position == Some(1) || m.removed_position == Some(2));
+            assert!(
+                m.removed_position == Some(0)
+                    || m.removed_position == Some(1)
+                    || m.removed_position == Some(2)
+            );
         }
     }
 
@@ -117,7 +131,11 @@ mod tests {
     fn test_legal_placement_moves_fully_occupied_board() {
         let mut board = Board::new();
         for i in 0..24 {
-            board.squares[i] = if i % 2 == 0 { Player::White } else { Player::Black };
+            board.squares[i] = if i % 2 == 0 {
+                Player::White
+            } else {
+                Player::Black
+            };
         }
 
         let moves = board.legal_placement_moves();

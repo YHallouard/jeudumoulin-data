@@ -34,7 +34,11 @@ mod tests {
     fn test_free_positions_fully_occupied_board() {
         let mut board = Board::new();
         for i in 0..24 {
-            board.squares[i] = if i % 2 == 0 { Player::White } else { Player::Black };
+            board.squares[i] = if i % 2 == 0 {
+                Player::White
+            } else {
+                Player::Black
+            };
         }
 
         let free_positions = board.free_positions();

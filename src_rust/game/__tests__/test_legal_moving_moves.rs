@@ -20,8 +20,12 @@ mod tests {
 
         assert_eq!(moves.len(), 2);
 
-        let move_to_1 = moves.iter().find(|m| m.from_position == Some(0) && m.to_position == 1);
-        let move_to_7 = moves.iter().find(|m| m.from_position == Some(0) && m.to_position == 7);
+        let move_to_1 = moves
+            .iter()
+            .find(|m| m.from_position == Some(0) && m.to_position == 1);
+        let move_to_7 = moves
+            .iter()
+            .find(|m| m.from_position == Some(0) && m.to_position == 7);
 
         assert!(move_to_1.is_some());
         assert!(move_to_7.is_some());
@@ -64,8 +68,12 @@ mod tests {
 
         let moves = board.legal_move_moves();
 
-        let move_1_to_0 = moves.iter().find(|m| m.from_position == Some(1) && m.to_position == 0);
-        let move_7_to_0 = moves.iter().find(|m| m.from_position == Some(7) && m.to_position == 0 && m.removed_position.is_some());
+        let move_1_to_0 = moves
+            .iter()
+            .find(|m| m.from_position == Some(1) && m.to_position == 0);
+        let move_7_to_0 = moves.iter().find(|m| {
+            m.from_position == Some(7) && m.to_position == 0 && m.removed_position.is_some()
+        });
 
         assert!(move_1_to_0.is_some());
         let move_1_to_0 = move_1_to_0.unwrap();
@@ -93,7 +101,9 @@ mod tests {
 
         let moves = board.legal_move_moves();
 
-        let removal_move_1 = moves.iter().find(|m| m.from_position == Some(7) && m.to_position == 0 && m.removed_position.is_some());
+        let removal_move_1 = moves.iter().find(|m| {
+            m.from_position == Some(7) && m.to_position == 0 && m.removed_position.is_some()
+        });
 
         assert!(removal_move_1.is_some());
 
