@@ -1,9 +1,12 @@
 from workflows._flows import train_alphazero_flow
 
+IMAGE = "ghcr.io/yhallouard/jeudumoulin/jeudumoulin-worker:latest"
+
 if __name__ == "__main__":
     train_alphazero_flow.deploy(
         name="train-alphazero-k8s",
         work_pool_name="kubernetes-homelab",
+        image=IMAGE,
         parameters={
             "config_path": "config/train_alphazero_light.yaml",
             "mlflow_tracking_uri": "http://mlflow.mlops.svc.cluster.local:5000",

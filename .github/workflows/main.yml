@@ -93,12 +93,6 @@ jobs:
           uv lock
           git add uv.lock
 
-      - name: Update kustomization.yaml with new version tag
-        run: |
-          VERSION="${{ steps.new_version.outputs.version }}"
-          sed -i "s/newTag: .*/newTag: \"v${VERSION}\"/" deploy/overlays/homelab/kustomization.yaml
-          git add deploy/overlays/homelab/kustomization.yaml
-
       - name: Commit, tag and push
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
