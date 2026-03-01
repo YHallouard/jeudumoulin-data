@@ -1,0 +1,39 @@
+name: Reusable Test And Type Check Workflow
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: false
+        type: string
+        default: "ubuntu-22.04"
+
+jobs:
+  tests-and-type-check:
+    runs-on: ${{ inputs.os }}
+    strategy:
+      matrix:
+        python-version: ["3.13"]
+      fail-fast: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run tests
+        # TODO: Change this to update the test to this project.
+        run: uv run python -m pytest src_python --cov --cov-config=pyproject.toml --cov-report=xml
+
+      - name: Check typing
+        run: uv run mypy src_python
+
+      - name: Upload coverage reports to Codecov with GitHub Action on Python 3.14
+        uses: codecov/codecov-action@v4
+        if: ${{ matrix.python-version == '3.13' }}

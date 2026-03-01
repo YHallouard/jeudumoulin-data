@@ -1,5 +1,5 @@
-pub mod constants;
 pub mod board;
+pub mod constants;
 
 #[cfg(test)]
 mod __tests__;

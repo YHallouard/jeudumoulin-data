@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod test_self_play {
     use pyo3::prelude::*;
-    use pyo3::types::{PyDict, PyList};
 
     #[test]
     fn test_generate_train_examples_returns_correct_types() {

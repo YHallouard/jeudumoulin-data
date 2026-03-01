@@ -38,7 +38,7 @@ class MLPDualNet(Model):
             nn.Tanh(),
         )
 
-        self._device = None
+        self._device: torch.device | None = None
 
     @property
     def device(self) -> torch.device:

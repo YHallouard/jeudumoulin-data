@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use pyo3::prelude::*;
+use std::collections::HashMap;
 
 use crate::game::{Board, Move};
 

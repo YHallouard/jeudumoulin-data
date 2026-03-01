@@ -1,5 +1,6 @@
 import json
 import random
+import tempfile
 from datetime import datetime
 from functools import singledispatch
 from pathlib import Path
@@ -9,6 +10,7 @@ import structlog
 import torch
 from jdm_ru import generate_train_examples
 from monitoring import MLflowLogger
+from prefect import task
 from pydantic import BaseModel
 from safetensors.torch import save_model
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LRScheduler, StepLR
@@ -116,24 +118,16 @@ class AlphaZeroTrainer:
         eval_frequency: int = 1,
         verbose: bool = True,
     ) -> dict:
-        self.mlflow_logger.start()
-
-        self.mlflow_logger.log_params({
-            "num_iterations": num_iterations,
-            "episodes_per_iteration": episodes_per_iteration,
-            "simulations_per_move": simulations_per_move,
-            "max_episode_steps": max_episode_steps,
-            "epochs_per_iteration": epochs_per_iteration,
-            "temperature": temperature,
-            "learning_rate": self.learning_rate,
-            "batch_size": self.batch_size,
-            "buffer_size": self.replay_buffer.max_size,
-            "save_frequency": save_frequency,
-            "eval_frequency": eval_frequency,
-            **{f"lr_scheduler__{key}": value for key, value in self.lr_scheduler_config.model_dump().items()},
-        })
-
-        self.mlflow_logger.log_config_artifact(self.agent.config.model_dump(), "config.json")
+        self.start_mlflow(
+            num_iterations=num_iterations,
+            episodes_per_iteration=episodes_per_iteration,
+            simulations_per_move=simulations_per_move,
+            max_episode_steps=max_episode_steps,
+            epochs_per_iteration=epochs_per_iteration,
+            temperature=temperature,
+            save_frequency=save_frequency,
+            eval_frequency=eval_frequency,
+        )
 
         if verbose:
             logger.info(
@@ -150,92 +144,127 @@ class AlphaZeroTrainer:
 
         save_folder.mkdir(parents=True, exist_ok=True)
 
-        if checkpoint_path:
-            logger.info("loading_checkpoint", path=str(checkpoint_path))
-            start_iteration = 0
-        else:
-            start_iteration = 0
-
-        for iteration in range(start_iteration, num_iterations):
-            logger.info("iteration_start", iteration=iteration + 1, total=num_iterations)
-
-            self.agent.model.eval()
-            logger.info("generating_self_play_data", episodes=episodes_per_iteration)
-            state_embeddings, legal_moves_data, policy_labels, value_labels = generate_train_examples(
-                self.agent,
-                simulations_per_move,
-                episodes_per_iteration,
-                max_episode_steps,
-                temperature,
+        for iteration in range(num_iterations):
+            self.run_iteration(
+                iteration=iteration,
+                episodes_per_iteration=episodes_per_iteration,
+                simulations_per_move=simulations_per_move,
+                max_episode_steps=max_episode_steps,
+                epochs_per_iteration=epochs_per_iteration,
+                temperature=temperature,
+                save_folder=save_folder,
+                save_frequency=save_frequency,
+                eval_frequency=eval_frequency,
+                verbose=verbose,
             )
 
-            logger.info(
-                "self_play_complete",
-                num_examples=len(state_embeddings),
-            )
+        logger.info("training_complete")
+        self.register_model()
+        self.finish_mlflow()
 
-            self.replay_buffer.add_examples(state_embeddings, legal_moves_data, policy_labels, value_labels)
-            logger.info("replay_buffer_size", size=len(self.replay_buffer))
+        return self._get_training_metrics()
 
-            self.agent.model.train()
-            logger.info("training_network", epochs=epochs_per_iteration)
-            iteration_losses = self._train_on_buffer(epochs_per_iteration, verbose)
+    def run_iteration(
+        self,
+        iteration: int,
+        episodes_per_iteration: int,
+        simulations_per_move: int,
+        max_episode_steps: int,
+        epochs_per_iteration: int,
+        temperature: float,
+        save_folder: Path,
+        save_frequency: int = 1,
+        eval_frequency: int = 1,
+        verbose: bool = True,
+    ) -> dict:
+        logger.info("iteration_start", iteration=iteration + 1)
 
-            if save_frequency and iteration % save_frequency == 0:
-                self._save_checkpoint(save_folder, iteration)
+        self.self_play(
+            episodes=episodes_per_iteration,
+            simulations_per_move=simulations_per_move,
+            max_episode_steps=max_episode_steps,
+            temperature=temperature,
+        )
 
-            if eval_frequency and iteration % eval_frequency == 0:
-                eval_metrics = self.evaluate(num_games=50, opponent_simulations=2000, verbose=verbose)
+        losses = self.train_on_buffer(epochs=epochs_per_iteration, verbose=verbose)
 
-                self.mlflow_logger.log_metrics(
-                    {
-                        "eval_win_rate": eval_metrics["win_rate"],
-                        "eval_loss_rate": eval_metrics["loss_rate"],
-                        "eval_draw_rate": eval_metrics["draw_rate"],
-                        "eval_avg_steps": eval_metrics["avg_steps"],
-                    },
-                    step=iteration + 1,
-                )
+        if save_frequency and iteration % save_frequency == 0:
+            self.save_checkpoint(save_folder, iteration)
 
-            metrics = {
-                "iteration": iteration + 1,
-                "num_examples": len(state_embeddings) / episodes_per_iteration,
-                "buffer_size": len(self.replay_buffer),
-                "avg_policy_loss": iteration_losses["avg_policy_loss"],
-                "avg_value_loss": iteration_losses["avg_value_loss"],
-                "avg_total_loss": iteration_losses["avg_total_loss"],
-            }
-
-            self.iteration_metrics.append(metrics)
-
-            self.scheduler.step()
-
+        eval_metrics = None
+        if eval_frequency and iteration % eval_frequency == 0:
+            eval_metrics = self.evaluate(num_games=50, opponent_simulations=2000, verbose=verbose)
             self.mlflow_logger.log_metrics(
                 {
-                    "policy_loss": metrics["avg_policy_loss"],
-                    "value_loss": metrics["avg_value_loss"],
-                    "total_loss": metrics["avg_total_loss"],
-                    "num_examples": metrics["num_examples"],
-                    "buffer_size": metrics["buffer_size"],
-                    "learning_rate": self.scheduler.get_last_lr()[0],
+                    "eval_win_rate": eval_metrics["win_rate"],
+                    "eval_loss_rate": eval_metrics["loss_rate"],
+                    "eval_draw_rate": eval_metrics["draw_rate"],
+                    "eval_avg_steps": eval_metrics["avg_steps"],
                 },
                 step=iteration + 1,
             )
 
-            logger.info("iteration_complete", iteration=iteration + 1)
+        metrics = {
+            "iteration": iteration + 1,
+            "buffer_size": len(self.replay_buffer),
+            "avg_policy_loss": losses["avg_policy_loss"],
+            "avg_value_loss": losses["avg_value_loss"],
+            "avg_total_loss": losses["avg_total_loss"],
+            "eval_metrics": eval_metrics,
+        }
+        self.iteration_metrics.append(metrics)
 
-        logger.info("training_complete")
+        self.scheduler.step()
 
-        self.mlflow_logger.finish()
+        self.mlflow_logger.log_metrics(
+            {
+                "policy_loss": metrics["avg_policy_loss"],
+                "value_loss": metrics["avg_value_loss"],
+                "total_loss": metrics["avg_total_loss"],
+                "buffer_size": metrics["buffer_size"],
+                "learning_rate": self.scheduler.get_last_lr()[0],
+            },
+            step=iteration + 1,
+        )
 
-        return self._get_training_metrics()
+        logger.info("iteration_complete", iteration=iteration + 1)
+        return metrics
 
-    def _train_on_buffer(self, epochs: int, verbose: bool) -> dict:
+    def self_play(
+        self,
+        episodes: int,
+        simulations_per_move: int,
+        max_episode_steps: int,
+        temperature: float,
+    ) -> int:
+        self.agent.model.to("cpu")
+        self.agent.model.eval()
+        logger.info("generating_self_play_data", episodes=episodes)
+
+        state_embeddings, legal_moves_data, policy_labels, value_labels = generate_train_examples(
+            self.agent,
+            simulations_per_move,
+            episodes,
+            max_episode_steps,
+            temperature,
+        )
+
+        num_examples = len(state_embeddings)
+        logger.info("self_play_complete", num_examples=num_examples)
+
+        self.replay_buffer.add_examples(state_embeddings, legal_moves_data, policy_labels, value_labels)
+        logger.info("replay_buffer_size", size=len(self.replay_buffer))
+
+        return num_examples
+
+    def train_on_buffer(self, epochs: int, verbose: bool = True) -> dict:
         epoch_policy_losses = []
         epoch_value_losses = []
         epoch_total_losses = []
 
         self.agent.model.to(self.device)
+        self.agent.model.train()
+        logger.info("training_network", epochs=epochs)
 
         with tqdm(range(epochs), desc="Epochs", disable=not verbose) as progress_bar:
             for _ in progress_bar:
@@ -316,7 +345,7 @@ class AlphaZeroTrainer:
             (batch_policy_loss + batch_value_loss) / batch_size,
         )
 
-    def _save_checkpoint(self, save_folder: Path, iteration: int) -> None:
+    def save_checkpoint(self, save_folder: Path, iteration: int) -> None:
         model_path = save_folder / "checkpoints" / f"model_iter{iteration:04d}.safetensors"
         model_path.parent.mkdir(parents=True, exist_ok=True)
         save_model(self.agent.model, str(model_path))
@@ -354,7 +383,7 @@ class AlphaZeroTrainer:
 
         for _ in range(num_games):
             board = jdm_ru.PyBoard()
-            agent_color = random.choice([1, -1])
+            agent_color = random.choice([1, -1])  # noqa: S311
             step = 0
             max_steps = 300
 
@@ -410,6 +439,42 @@ class AlphaZeroTrainer:
 
         return metrics
 
+    def start_mlflow(
+        self,
+        num_iterations: int,
+        episodes_per_iteration: int,
+        simulations_per_move: int,
+        max_episode_steps: int,
+        epochs_per_iteration: int,
+        temperature: float,
+        save_frequency: int,
+        eval_frequency: int,
+    ) -> None:
+        self.mlflow_logger.start()
+        self.mlflow_logger.log_params({
+            "num_iterations": num_iterations,
+            "episodes_per_iteration": episodes_per_iteration,
+            "simulations_per_move": simulations_per_move,
+            "max_episode_steps": max_episode_steps,
+            "epochs_per_iteration": epochs_per_iteration,
+            "temperature": temperature,
+            "learning_rate": self.learning_rate,
+            "batch_size": self.batch_size,
+            "buffer_size": self.replay_buffer.max_size,
+            "save_frequency": save_frequency,
+            "eval_frequency": eval_frequency,
+            **{f"lr_scheduler__{key}": value for key, value in self.lr_scheduler_config.model_dump().items()},
+        })
+        self.mlflow_logger.log_config_artifact(self.agent.config.model_dump(), "config.json")
+
+    def register_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self.agent.save_pretrained(tmp_dir)
+            self.mlflow_logger.register_model(tmp_dir, "jeudumoulin-alphazero")
+
+    def finish_mlflow(self) -> None:
+        self.mlflow_logger.finish()
+
     def _get_training_metrics(self) -> dict:
         return {
             "iteration_metrics": self.iteration_metrics,
@@ -419,3 +484,92 @@ class AlphaZeroTrainer:
 
     def get_buffer_statistics(self) -> dict:
         return self.replay_buffer.get_statistics()
+
+
+# --- Prefect tasks ---
+
+
+@task(name="start-mlflow")
+def start_mlflow_task(
+    trainer: AlphaZeroTrainer,
+    num_iterations: int,
+    episodes_per_iteration: int,
+    simulations_per_move: int,
+    max_episode_steps: int,
+    epochs_per_iteration: int,
+    temperature: float,
+    save_frequency: int,
+    eval_frequency: int,
+) -> None:
+    trainer.start_mlflow(
+        num_iterations=num_iterations,
+        episodes_per_iteration=episodes_per_iteration,
+        simulations_per_move=simulations_per_move,
+        max_episode_steps=max_episode_steps,
+        epochs_per_iteration=epochs_per_iteration,
+        temperature=temperature,
+        save_frequency=save_frequency,
+        eval_frequency=eval_frequency,
+    )
+
+
+@task(name="self-play")
+def self_play_task(
+    trainer: AlphaZeroTrainer,
+    episodes: int,
+    simulations_per_move: int,
+    max_episode_steps: int,
+    temperature: float,
+) -> int:
+    return trainer.self_play(
+        episodes=episodes,
+        simulations_per_move=simulations_per_move,
+        max_episode_steps=max_episode_steps,
+        temperature=temperature,
+    )
+
+
+@task(name="train-on-buffer")
+def train_on_buffer_task(trainer: AlphaZeroTrainer, epochs: int, verbose: bool = True) -> dict:
+    return trainer.train_on_buffer(epochs=epochs, verbose=verbose)
+
+
+@task(name="save-checkpoint")
+def save_checkpoint_task(trainer: AlphaZeroTrainer, save_folder: Path, iteration: int) -> None:
+    trainer.save_checkpoint(save_folder, iteration)
+
+
+@task(name="evaluate")
+def evaluate_task(
+    trainer: AlphaZeroTrainer,
+    num_games: int = 50,
+    opponent_simulations: int = 2000,
+    verbose: bool = True,
+) -> dict:
+    return trainer.evaluate(num_games=num_games, opponent_simulations=opponent_simulations, verbose=verbose)
+
+
+@task(name="log-iteration-metrics")
+def log_iteration_metrics_task(trainer: AlphaZeroTrainer, metrics: dict, iteration: int) -> None:
+    trainer.iteration_metrics.append(metrics)
+    trainer.scheduler.step()
+    trainer.mlflow_logger.log_metrics(
+        {
+            "policy_loss": metrics["avg_policy_loss"],
+            "value_loss": metrics["avg_value_loss"],
+            "total_loss": metrics["avg_total_loss"],
+            "buffer_size": metrics["buffer_size"],
+            "learning_rate": trainer.scheduler.get_last_lr()[0],
+        },
+        step=iteration + 1,
+    )
+
+
+@task(name="register-model")
+def register_model_task(trainer: AlphaZeroTrainer) -> None:
+    trainer.register_model()
+
+
+@task(name="finish-mlflow")
+def finish_mlflow_task(trainer: AlphaZeroTrainer) -> None:
+    trainer.finish_mlflow()

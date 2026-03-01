@@ -1,5 +1,5 @@
-use std::hash::Hash;
 use std::collections::HashMap;
+use std::hash::Hash;
 
 use pyo3::prelude::*;
 
@@ -73,7 +73,11 @@ struct PyMove {
 impl PyMove {
     #[new]
     #[pyo3(signature = (*, to_position, from_position=None, removed_position=None))]
-    fn new(to_position: usize, from_position: Option<usize>, removed_position: Option<usize>) -> Self {
+    fn new(
+        to_position: usize,
+        from_position: Option<usize>,
+        removed_position: Option<usize>,
+    ) -> Self {
         PyMove {
             mov: Move {
                 from_position,
@@ -113,6 +117,7 @@ impl PyMove {
         self.mov.to_indices()
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn from_position(&self) -> Option<usize> {
         self.mov.from_position
     }
@@ -126,10 +131,10 @@ impl PyMove {
     }
 
     fn __repr__(&self) -> String {
-        format!("Move(from={:?}, to={}, removed={:?})",
-                self.mov.from_position,
-                self.mov.to_position,
-                self.mov.removed_position)
+        format!(
+            "Move(from={:?}, to={}, removed={:?})",
+            self.mov.from_position, self.mov.to_position, self.mov.removed_position
+        )
     }
 
     fn __hash__(&self) -> u64 {
@@ -167,11 +172,17 @@ impl PyMCTS {
     }
 
     #[pyo3(signature = (agent, board, depth, root=None))]
-    fn run(&self, agent: &Bound<'_, PyAny>, board: &PyBoard, depth: usize, root: Option<PyNode>) -> PyResult<PyNode> {
+    fn run(
+        &self,
+        agent: &Bound<'_, PyAny>,
+        board: &PyBoard,
+        depth: usize,
+        root: Option<PyNode>,
+    ) -> PyNode {
         let rust_agent = agent::base::PythonAgent::new(agent.clone().unbind());
         let rust_root = root.map(|n| n.node);
         let result_node = self.mcts.run(&rust_agent, &board.board, depth, rust_root);
-        Ok(PyNode { node: result_node })
+        PyNode { node: result_node }
     }
 }
 
@@ -196,11 +207,10 @@ impl PyNode {
 
     #[getter]
     fn children(&self) -> HashMap<PyMove, PyNode> {
-        self.node.children
+        self.node
+            .children
             .iter()
-            .map(|(mov, node)| {
-                (PyMove { mov: mov.clone() }, PyNode { node: node.clone() })
-            })
+            .map(|(mov, node)| (PyMove { mov: mov.clone() }, PyNode { node: node.clone() }))
             .collect()
     }
 
@@ -222,6 +232,9 @@ fn jdm_ru(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMove>()?;
     m.add_class::<PyMCTS>()?;
     m.add_class::<PyNode>()?;
-    m.add_function(wrap_pyfunction!(training::self_play::generate_train_examples, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        training::self_play::generate_train_examples,
+        m
+    )?)?;
     Ok(())
 }

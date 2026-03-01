@@ -48,13 +48,11 @@ class DQNAgent:
             Index of selected move in legal_moves list
         """
         if not legal_moves:
-            raise ValueError("No legal moves available")
+            raise ValueError("No legal moves available")  # noqa: TRY003
 
-        # Exploration: random action
-        if random.random() < epsilon:
-            return random.randint(0, len(legal_moves) - 1)
+        if random.random() < epsilon:  # noqa: S311
+            return random.randint(0, len(legal_moves) - 1)  # noqa: S311
 
-        # Exploitation: best Q-value action
         return self.select_best_action(state, legal_moves)
 
     def select_best_action(
@@ -73,9 +71,8 @@ class DQNAgent:
             Index of best move in legal_moves list
         """
         if not legal_moves:
-            raise ValueError("No legal moves available")
+            raise ValueError("No legal moves available")  # noqa: TRY003
 
-        # Get Q-values for all legal moves
         q_values = self.predict_q_values(state, legal_moves)
 
         # Return index of maximum Q-value

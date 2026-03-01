@@ -1,0 +1,45 @@
+name: "Release state"
+description: "Get the release state: Is a release going to be made? What is the release version?"
+
+inputs:
+  python-version:
+    description: "Python version to use"
+    required: true
+    default: "3.14"
+
+outputs:
+  will_release:
+    description: "will_release is a boolean value that indicates if a release will be made"
+    value: ${{ steps.will_release.outputs.will_release }}
+  release_version:
+    description: "release_version is the current version"
+    value: ${{ steps.release_version.outputs.release_version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up the environment
+      uses: ./.github/actions/setup-python-env
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Will release
+      id: will_release
+      shell: bash
+      run: |
+        echo "Set job variable 'will_release'"
+        NEW_VERSION=$(uvx --from python-semantic-release semantic-release version --print 2>&1)
+        if [[ $NEW_VERSION == *"No"* ]]; then
+            will_release=false
+        else
+            will_release=true
+        fi
+        echo "will_release=$will_release" >> "$GITHUB_OUTPUT"
+
+    - name: Release version
+      id: release_version
+      shell: bash
+      run: |
+        echo "Set job variable 'release_version'"
+        VERSION=$(uvx --from python-semantic-release semantic-release version --print-last-released)
+        echo "release_version=$VERSION" >> "$GITHUB_OUTPUT"

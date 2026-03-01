@@ -47,7 +47,7 @@ class PositionalEmbedding(nn.Module):
     def forward(self, positions: torch.Tensor) -> torch.Tensor:
         level = positions // 8
         position_in_level = positions % 8
-        sinusoidal_emb = self.sinusoidal_table[positions]
+        sinusoidal_emb = self.sinusoidal_table[positions]  # type: ignore[index]
         return torch.cat(
             [self.level_embedding(level), self.position_in_level_embedding(position_in_level), sinusoidal_emb], dim=1
         )

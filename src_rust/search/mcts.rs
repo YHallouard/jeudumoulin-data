@@ -10,7 +10,8 @@ use crate::game::{Board, Move};
 const C_PUCT: f64 = 1.25; //std::f64::consts::SQRT_2;
 
 fn ucb_score(parent: &Node, child: &Node) -> f64 {
-    let prior_score = child.prior * C_PUCT * (parent.visit_count as f64).sqrt() / (child.visit_count + 1) as f64;
+    let prior_score =
+        child.prior * C_PUCT * (parent.visit_count as f64).sqrt() / (child.visit_count + 1) as f64;
     let value_score = if child.visit_count > 0 {
         -child.value()
     } else {
@@ -97,9 +98,7 @@ impl Node {
                     let idx = dist.sample(&mut rng);
                     actions[idx].clone()
                 }
-                Err(_) => {
-                    actions.choose(&mut rng).unwrap().clone()
-                }
+                Err(_) => actions.choose(&mut rng).unwrap().clone(),
             }
         }
     }
@@ -149,7 +148,8 @@ impl Node {
 
         for (action, prob) in final_probs {
             if prob != 0.0 {
-                self.children.insert(action, Node::new(prob as f64, self.depth + 1));
+                self.children
+                    .insert(action, Node::new(prob as f64, self.depth + 1));
             }
         }
     }

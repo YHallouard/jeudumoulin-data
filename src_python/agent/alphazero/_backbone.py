@@ -68,7 +68,7 @@ class GraphConvLayer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x if self.use_residual else None
-        x = torch.matmul(self.adjacency, x)
+        x = torch.matmul(self.adjacency, x)  # type: ignore[arg-type]
         x = torch.matmul(x, self.weight) + self.bias
         x = self.norm(x)
         if residual is not None:
@@ -103,7 +103,7 @@ class GraphConvBackbone(nn.Module):
 
         self.graph_layers = nn.ModuleList()
         if not isinstance(self.adjacency, torch.Tensor):
-            raise ValueError("Adjacency matrix must be a torch.Tensor")
+            raise TypeError("Adjacency matrix must be a torch.Tensor")  # noqa: TRY003
         self.graph_layers.append(GraphConvLayer(3, self.config.graph_layer_hidden_dim, self.adjacency))
 
         for i in range(1, config.num_graph_layers):
@@ -214,7 +214,7 @@ class GraphConvBackbone(nn.Module):
 
         x = torch.cat([board, graph_global, player, phase])
         x = self.fusion(x)
-        return x
+        return x  # type: ignore[no-any-return]
 
 
 BackboneConfig = MLPBackboneConfig | GraphConvBackboneConfig

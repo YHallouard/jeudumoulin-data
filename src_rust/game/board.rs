@@ -62,8 +62,8 @@ impl Move {
         let rotated_from_position = self.from_position.map(|from_pos| {
             LEVEL_SIZE * (from_pos / LEVEL_SIZE) + (from_pos + 2 * times) % LEVEL_SIZE
         });
-        let rotated_to_position =
-            LEVEL_SIZE * (self.to_position / LEVEL_SIZE) + (self.to_position + 2 * times) % LEVEL_SIZE;
+        let rotated_to_position = LEVEL_SIZE * (self.to_position / LEVEL_SIZE)
+            + (self.to_position + 2 * times) % LEVEL_SIZE;
         let rotated_removed_position = self.removed_position.map(|removed_pos| {
             LEVEL_SIZE * (removed_pos / LEVEL_SIZE) + (removed_pos + 2 * times) % LEVEL_SIZE
         });
@@ -202,7 +202,11 @@ impl Board {
     pub fn opponent_all_in_moulin(&self) -> bool {
         let player_moulins: Vec<_> = MOULINS
             .iter()
-            .filter(|moulin| moulin.iter().all(|&i| self.squares[i] == self.current_player.opponent()))
+            .filter(|moulin| {
+                moulin
+                    .iter()
+                    .all(|&i| self.squares[i] == self.current_player.opponent())
+            })
             .collect();
 
         let flattened_moulins: Vec<usize> = player_moulins
@@ -279,10 +283,13 @@ impl Board {
                 .map(|&pos| base.with_removal(pos))
                 .collect()
         } else {
-            self.get_player_not_protected_positions(opponent_positions, self.current_player.opponent())
-                .iter()
-                .map(|&pos| base.with_removal(pos))
-                .collect()
+            self.get_player_not_protected_positions(
+                opponent_positions,
+                self.current_player.opponent(),
+            )
+            .iter()
+            .map(|&pos| base.with_removal(pos))
+            .collect()
         }
     }
 
@@ -294,7 +301,11 @@ impl Board {
         for position in self.free_positions() {
             let base = Move::placement(position);
             if self.forms_moulin(&base, self.current_player) {
-                let removal_moves = self.generate_removal_moves(&base, &opponent_positions, is_all_opponent_in_moulin);
+                let removal_moves = self.generate_removal_moves(
+                    &base,
+                    &opponent_positions,
+                    is_all_opponent_in_moulin,
+                );
                 moves.extend(removal_moves);
             } else {
                 moves.push(base);
@@ -313,7 +324,11 @@ impl Board {
                 if self.squares[neighbor] == Player::None {
                     let base = Move::move_piece(position, neighbor);
                     if self.forms_moulin(&base, self.current_player) {
-                        let removal_moves = self.generate_removal_moves(&base, &opponent_positions, is_all_opponent_in_moulin);
+                        let removal_moves = self.generate_removal_moves(
+                            &base,
+                            &opponent_positions,
+                            is_all_opponent_in_moulin,
+                        );
                         moves.extend(removal_moves);
                     } else {
                         moves.push(base);
@@ -339,7 +354,11 @@ impl Board {
             for position in self.free_positions() {
                 let base = Move::move_piece(from_position, position);
                 if self.forms_moulin(&base, self.current_player) {
-                    let removal_moves = self.generate_removal_moves(&base, &opponent_positions, is_all_opponent_in_moulin);
+                    let removal_moves = self.generate_removal_moves(
+                        &base,
+                        &opponent_positions,
+                        is_all_opponent_in_moulin,
+                    );
                     moves.extend(removal_moves);
                 } else {
                     moves.push(base);
@@ -444,7 +463,9 @@ impl Board {
         let mut board = self.clone();
 
         if let Some(from_pos) = mov.from_position {
-            board.move_from_to(from_pos, mov.to_position, mov.removed_position).ok();
+            board
+                .move_from_to(from_pos, mov.to_position, mov.removed_position)
+                .ok();
         } else {
             if self.phase != Phase::Placing {
                 let _ = board.legal_moves();
@@ -491,13 +512,33 @@ impl Board {
         let mut features = Vec::with_capacity(77);
 
         // One-hot encode current player (2 features)
-        features.push(if self.current_player == Player::White { 1.0 } else { 0.0 });
-        features.push(if self.current_player == Player::Black { 1.0 } else { 0.0 });
+        features.push(if self.current_player == Player::White {
+            1.0
+        } else {
+            0.0
+        });
+        features.push(if self.current_player == Player::Black {
+            1.0
+        } else {
+            0.0
+        });
 
         // One-hot encode phase (3 features)
-        features.push(if self.phase == Phase::Placing { 1.0 } else { 0.0 });
-        features.push(if self.phase == Phase::Moving { 1.0 } else { 0.0 });
-        features.push(if self.phase == Phase::Flying { 1.0 } else { 0.0 });
+        features.push(if self.phase == Phase::Placing {
+            1.0
+        } else {
+            0.0
+        });
+        features.push(if self.phase == Phase::Moving {
+            1.0
+        } else {
+            0.0
+        });
+        features.push(if self.phase == Phase::Flying {
+            1.0
+        } else {
+            0.0
+        });
 
         // One-hot encode each square (24 * 3 = 72 features)
         for square in &self.squares {
@@ -518,19 +559,57 @@ impl Board {
             }
         };
 
-        println!("{}----------{}----------{}", get_piece(0), get_piece(1), get_piece(2));
+        println!(
+            "{}----------{}----------{}",
+            get_piece(0),
+            get_piece(1),
+            get_piece(2)
+        );
         println!("|          |          |");
-        println!("|  {}-------{}-------{}  |", get_piece(8), get_piece(9), get_piece(10));
+        println!(
+            "|  {}-------{}-------{}  |",
+            get_piece(8),
+            get_piece(9),
+            get_piece(10)
+        );
         println!("|  |       |       |  |");
-        println!("|  |   {}---{}---{}   |  |", get_piece(16), get_piece(17), get_piece(18));
+        println!(
+            "|  |   {}---{}---{}   |  |",
+            get_piece(16),
+            get_piece(17),
+            get_piece(18)
+        );
         println!("|  |   |       |   |  |");
-        println!("{}---{}---{}       {}---{}--{}", get_piece(7), get_piece(15), get_piece(23), get_piece(19), get_piece(11), get_piece(3));
+        println!(
+            "{}---{}---{}       {}---{}--{}",
+            get_piece(7),
+            get_piece(15),
+            get_piece(23),
+            get_piece(19),
+            get_piece(11),
+            get_piece(3)
+        );
         println!("|  |   |       |   |  |");
-        println!("|  |   {}---{}---{}   |  |", get_piece(22), get_piece(21), get_piece(20));
+        println!(
+            "|  |   {}---{}---{}   |  |",
+            get_piece(22),
+            get_piece(21),
+            get_piece(20)
+        );
         println!("|  |       |       |  |");
-        println!("|  {}-------{}-------{}  |", get_piece(14), get_piece(13), get_piece(12));
+        println!(
+            "|  {}-------{}-------{}  |",
+            get_piece(14),
+            get_piece(13),
+            get_piece(12)
+        );
         println!("|          |          |");
-        println!("{}----------{}----------{}", get_piece(6), get_piece(5), get_piece(4));
+        println!(
+            "{}----------{}----------{}",
+            get_piece(6),
+            get_piece(5),
+            get_piece(4)
+        );
     }
 }
 

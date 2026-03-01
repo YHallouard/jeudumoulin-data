@@ -3,43 +3,64 @@ import unittest
 import torch
 from agent.alphazero._conditional_policy import (
     FullyConditionalPolicyHead,
+    FullyConditionalPolicyHeadConfig,
     SemiConditionalPolicyHead,
+    SemiConditionalPolicyHeadConfig,
 )
+from agent.alphazero._position import PositionalEmbeddingConfig
 from jdm_ru import PyBoard as Board
 
 
-class TestSemiConditionalPolicyHead(unittest.TestCase):
-    def setUp(self):
-        self.policy_head = SemiConditionalPolicyHead(state_embedding_dim=128, position_embedding_dim=32)
-        self.state = Board()
-        self.legal_actions = self.state.legal_moves()
+def _make_semi_config(state_dim: int = 128, emb_dim: int = 32) -> SemiConditionalPolicyHeadConfig:
+    return SemiConditionalPolicyHeadConfig(
+        state_embedding_dim=state_dim,
+        embedding=PositionalEmbeddingConfig(embedding_dim=emb_dim),
+    )
 
-    def test_output_shape(self):
+
+def _make_fully_config(state_dim: int = 128, emb_dim: int = 32) -> FullyConditionalPolicyHeadConfig:
+    return FullyConditionalPolicyHeadConfig(
+        state_embedding_dim=state_dim,
+        embedding=PositionalEmbeddingConfig(embedding_dim=emb_dim),
+    )
+
+
+def _legal_moves_as_indices(board: Board) -> list[list[int]]:
+    return [move.to_indices() for move in board.legal_moves()]
+
+
+class TestSemiConditionalPolicyHead(unittest.TestCase):
+    def setUp(self) -> None:
+        self.policy_head = SemiConditionalPolicyHead(_make_semi_config())
+        self.state = Board()
+        self.legal_actions = _legal_moves_as_indices(self.state)
+
+    def test_output_shape(self) -> None:
         state_embedding = torch.randn(128)
         probs = self.policy_head(state_embedding, self.legal_actions)
 
         self.assertEqual(probs.shape, (len(self.legal_actions),))
 
-    def test_probabilities_sum_to_one(self):
+    def test_probabilities_sum_to_one(self) -> None:
         state_embedding = torch.randn(128)
         probs = self.policy_head(state_embedding, self.legal_actions)
 
         self.assertAlmostEqual(probs.sum().item(), 1.0, places=5)
 
-    def test_all_probabilities_positive(self):
+    def test_all_probabilities_positive(self) -> None:
         state_embedding = torch.randn(128)
         probs = self.policy_head(state_embedding, self.legal_actions)
 
         self.assertTrue(torch.all(probs >= 0))
         self.assertTrue(torch.all(probs <= 1))
 
-    def test_empty_actions(self):
+    def test_empty_actions(self) -> None:
         state_embedding = torch.randn(128)
         probs = self.policy_head(state_embedding, [])
 
         self.assertEqual(len(probs), 0)
 
-    def test_gradient_flow(self):
+    def test_gradient_flow(self) -> None:
         state_embedding = torch.randn(128, requires_grad=True)
         probs = self.policy_head(state_embedding, self.legal_actions)
 
@@ -47,28 +68,28 @@ class TestSemiConditionalPolicyHead(unittest.TestCase):
         loss.backward()
 
         self.assertIsNotNone(state_embedding.grad)
-        self.assertTrue(torch.any(state_embedding.grad != 0))
+        self.assertTrue(torch.any(state_embedding.grad != 0).item())  # type: ignore[arg-type]
 
 
 class TestFullyConditionalPolicyHead(unittest.TestCase):
-    def setUp(self):
-        self.policy_head = FullyConditionalPolicyHead(state_embedding_dim=128, position_embedding_dim=32)
+    def setUp(self) -> None:
+        self.policy_head = FullyConditionalPolicyHead(_make_fully_config())
         self.state = Board()
-        self.legal_actions = self.state.legal_moves()
+        self.legal_actions = _legal_moves_as_indices(self.state)
 
-    def test_output_shape(self):
+    def test_output_shape(self) -> None:
         state_embedding = torch.randn(128)
         probs = self.policy_head(state_embedding, self.legal_actions)
 
         self.assertEqual(probs.shape, (len(self.legal_actions),))
 
-    def test_probabilities_sum_to_one(self):
+    def test_probabilities_sum_to_one(self) -> None:
         state_embedding = torch.randn(128)
         probs = self.policy_head(state_embedding, self.legal_actions)
 
         self.assertAlmostEqual(probs.sum().item(), 1.0, places=5)
 
-    def test_all_probabilities_positive(self):
+    def test_all_probabilities_positive(self) -> None:
         state_embedding = torch.randn(128)
         probs = self.policy_head(state_embedding, self.legal_actions)
 
@@ -77,12 +98,12 @@ class TestFullyConditionalPolicyHead(unittest.TestCase):
 
 
 class TestConditionalPolicyComparison(unittest.TestCase):
-    def test_both_policies_produce_valid_distributions(self):
-        semi_policy = SemiConditionalPolicyHead(128, 32)
-        full_policy = FullyConditionalPolicyHead(128, 32)
+    def test_both_policies_produce_valid_distributions(self) -> None:
+        semi_policy = SemiConditionalPolicyHead(_make_semi_config())
+        full_policy = FullyConditionalPolicyHead(_make_fully_config())
 
         state = Board()
-        legal_actions = state.legal_moves()
+        legal_actions = _legal_moves_as_indices(state)
         state_embedding = torch.randn(128)
 
         semi_probs = semi_policy(state_embedding, legal_actions)

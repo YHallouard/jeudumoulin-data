@@ -1,0 +1,17 @@
+name: Pull Request CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: pull_request-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    uses: ./.github/workflows/validate.yml
+    with:
+      python-version: "3.14"
+      os: "ubuntu-22.04"
