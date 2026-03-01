@@ -418,7 +418,7 @@ class GatedBlock(nn.Module):
         combined = self.activation(h_state * gate)
         combined = self.dropout(combined)
         combined = self.output_proj(combined)
-        return combined  # type: ignore[return-value]
+        return combined  # type: ignore[no-any-return]
 
 
 class GatedConditionalPolicyHead(nn.Module):

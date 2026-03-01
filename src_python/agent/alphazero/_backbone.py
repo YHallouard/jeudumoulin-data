@@ -214,7 +214,7 @@ class GraphConvBackbone(nn.Module):
 
         x = torch.cat([board, graph_global, player, phase])
         x = self.fusion(x)
-        return x  # type: ignore[return-value]
+        return x  # type: ignore[no-any-return]
 
 
 BackboneConfig = MLPBackboneConfig | GraphConvBackboneConfig
