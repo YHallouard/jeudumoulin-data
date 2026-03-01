@@ -1,0 +1,105 @@
+name: Main Workflow
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - id: check
+        run: |
+          msg="${{ github.event.head_commit.message }}"
+          if echo "$msg" | grep -Eiq '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]'; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  release_state:
+    name: Release State
+    needs: guard
+    if: needs.guard.outputs.proceed == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Get Release Version
+        id: release_version
+        uses: ./.github/actions/release_state
+        with:
+          python-version: "3.14"
+    outputs:
+      release_version: ${{ steps.release_version.outputs.release_version }}
+      will_release: ${{ steps.release_version.outputs.will_release }}
+
+  validate:
+    name: Validate Package
+    needs: [guard, release_state]
+    if: needs.guard.outputs.proceed == 'true'
+    uses: ./.github/workflows/validate.yml
+    with:
+      python-version: "3.14"
+      os: "ubuntu-22.04"
+
+  release:
+    name: Bump version & Release
+    runs-on: ubuntu-22.04
+    needs: [guard, validate, release_state]
+    if: needs.guard.outputs.proceed == 'true' && needs.release_state.outputs.will_release == 'true'
+    steps:
+      - name: Generate token for GitHub App
+        id: generate-token
+        uses: getsentry/action-github-app-token@v2
+        with:
+          app_id: ${{ secrets.GH_APP_ID }}
+          private_key: ${{ secrets.GH_APP_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.generate-token.outputs.token }}
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: "3.14"
+
+      - name: Configure git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Get new version
+        id: new_version
+        run: |
+          NEW_VERSION=$(uvx --from python-semantic-release semantic-release version --print)
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version and update lock
+        run: |
+          uvx --from python-semantic-release semantic-release version --no-commit --no-changelog --no-tag --no-push
+          uv lock
+          git add uv.lock
+
+      - name: Update kustomization.yaml with new version tag
+        run: |
+          VERSION="${{ steps.new_version.outputs.version }}"
+          sed -i "s/newTag: .*/newTag: \"v${VERSION}\"/" deploy/overlays/homelab/kustomization.yaml
+          git add deploy/overlays/homelab/kustomization.yaml
+
+      - name: Commit, tag and push
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          uvx --from python-semantic-release semantic-release version --commit --changelog --tag --push --vcs-release

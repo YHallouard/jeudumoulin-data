@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use std::collections::HashMap;
+use rand::Rng;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
