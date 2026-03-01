@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-import yaml  # type: ignore[import-untyped]
+import yaml
 from jinja2 import Environment
-from prefect import task  # type: ignore[import-untyped]
+from prefect import task
 
 
 @task(name="load-config")

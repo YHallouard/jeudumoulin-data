@@ -8,6 +8,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use crate::game::{Board, Move, Player};
 use crate::search::{Node, MCTS};
 
+type TrainExamplesResult = (Vec<Vec<f32>>, Vec<Vec<Vec<Option<usize>>>>, Vec<Vec<f32>>, Vec<f32>);
+
 pub struct TrainExample {
     pub state_embedding: Vec<f32>,
     pub legal_moves: Vec<Vec<Option<usize>>>,
@@ -97,10 +99,10 @@ pub fn execute_episode(
 
         let root = mcts.run(&python_agent, &state, 0, reused_root);
 
-        let state_embedding = state.to_embed();
+        let _state_embedding = state.to_embed();
         let legal_moves = state.legal_moves();
 
-        let legal_moves_as_lists: Vec<Vec<Option<usize>>> = legal_moves
+        let _legal_moves_as_lists: Vec<Vec<Option<usize>>> = legal_moves
             .iter()
             .map(|m| vec![m.from_position, Some(m.to_position), m.removed_position])
             .collect();
@@ -116,7 +118,7 @@ pub fn execute_episode(
             }
         }
 
-        let policy_labels: Vec<f32> = legal_moves
+        let _policy_labels: Vec<f32> = legal_moves
             .iter()
             .map(|m| *action_probs.get(m).unwrap_or(&0.0))
             .collect();
@@ -192,32 +194,6 @@ pub fn execute_episode(
     Ok(train_examples)
 }
 
-fn select_action_by_temperature(probs: &[f32], temperature: f64) -> usize {
-    use rand::distributions::WeightedIndex;
-    use rand::prelude::*;
-
-    if temperature == 0.0 {
-        probs
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .map(|(idx, _)| idx)
-            .unwrap_or(0)
-    } else {
-        let adjusted: Vec<f64> = probs
-            .iter()
-            .map(|&p| (p as f64).powf(1.0 / temperature))
-            .collect();
-
-        let sum: f64 = adjusted.iter().sum();
-        let normalized: Vec<f64> = adjusted.iter().map(|v| v / sum).collect();
-
-        let mut rng = thread_rng();
-        let dist = WeightedIndex::new(&normalized).unwrap();
-        dist.sample(&mut rng)
-    }
-}
-
 #[pyfunction]
 pub fn generate_train_examples(
     py: Python,
@@ -226,12 +202,7 @@ pub fn generate_train_examples(
     num_episodes: usize,
     max_episode_steps: usize,
     temperature: f64,
-) -> PyResult<(
-    Vec<Vec<f32>>,
-    Vec<Vec<Vec<Option<usize>>>>,
-    Vec<Vec<f32>>,
-    Vec<f32>,
-)> {
+) -> PyResult<TrainExamplesResult> {
     let mut all_state_embeddings: Vec<Vec<f32>> = Vec::new();
     let mut all_legal_moves: Vec<Vec<Vec<Option<usize>>>> = Vec::new();
     let mut all_policy_labels: Vec<Vec<f32>> = Vec::new();

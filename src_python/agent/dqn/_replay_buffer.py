@@ -49,7 +49,7 @@ class ExperienceReplayBuffer:
             max_size: Maximum number of transitions to store
             device: Device for PyTorch tensors ('cpu' or 'cuda')
         """
-        self.buffer = deque(maxlen=max_size)
+        self.buffer: deque[tuple[list[float], list[int], float, list[float], bool]] = deque(maxlen=max_size)
         self.max_size = max_size
         self.device = device
 
@@ -201,7 +201,7 @@ class PrioritizedExperienceReplayBuffer(ExperienceReplayBuffer):
         self.alpha = alpha
         self.beta = beta
         self.beta_increment = beta_increment
-        self.priorities = deque(maxlen=max_size)
+        self.priorities: deque[float] = deque(maxlen=max_size)
         self.max_priority = 1.0
 
     def add(
@@ -231,7 +231,7 @@ class PrioritizedExperienceReplayBuffer(ExperienceReplayBuffer):
 
         self.priorities.append(priority)
 
-    def sample(
+    def sample(  # type: ignore[override]
         self, batch_size: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[int]]:
         """

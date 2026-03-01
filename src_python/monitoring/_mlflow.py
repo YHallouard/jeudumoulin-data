@@ -1,5 +1,6 @@
 import json
 from inspect import Traceback
+from pathlib import Path
 from typing import Any
 
 import mlflow
@@ -71,6 +72,21 @@ class MLflowLogger:
             mlflow.set_tag(key, value)
         except Exception:
             logger.exception("Failed to set tag")
+
+    def register_model(self, model_dir: str | Path, registered_model_name: str) -> None:
+        if not self._active:
+            return
+        try:
+            mlflow.log_artifacts(str(model_dir), artifact_path="model")
+            model_uri = f"runs:/{self.run.info.run_id}/model"
+            mlflow.register_model(model_uri, registered_model_name)
+            logger.info(
+                "model_registered",
+                model_name=registered_model_name,
+                run_id=self.run.info.run_id,
+            )
+        except Exception:
+            logger.exception("Failed to register model")
 
     def finish(self, status: str = "FINISHED") -> None:
         if not self._active:

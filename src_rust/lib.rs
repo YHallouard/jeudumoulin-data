@@ -117,6 +117,7 @@ impl PyMove {
         self.mov.to_indices()
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn from_position(&self) -> Option<usize> {
         self.mov.from_position
     }
@@ -177,11 +178,11 @@ impl PyMCTS {
         board: &PyBoard,
         depth: usize,
         root: Option<PyNode>,
-    ) -> PyResult<PyNode> {
+    ) -> PyNode {
         let rust_agent = agent::base::PythonAgent::new(agent.clone().unbind());
         let rust_root = root.map(|n| n.node);
         let result_node = self.mcts.run(&rust_agent, &board.board, depth, rust_root);
-        Ok(PyNode { node: result_node })
+        PyNode { node: result_node }
     }
 }
 

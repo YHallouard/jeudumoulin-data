@@ -12,7 +12,7 @@ import torch.optim as optim
 from monitoring import MLflowLogger
 from player._dqn import DQNPlayer
 from player._random import RandomPlayer
-from prefect import task  # type: ignore[import-untyped]
+from prefect import task
 from reward.calculator import RewardCalculator
 from safetensors.torch import save_model
 

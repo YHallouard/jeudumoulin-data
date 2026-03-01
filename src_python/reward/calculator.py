@@ -26,8 +26,7 @@ class RewardCalculator:
     All rewards are normalized based on the current game phase.
     """
 
-    def __init__(self):
-        """Initialize the reward calculator."""
+    def __init__(self) -> None:
         pass
 
     def calculate_reward(

@@ -46,6 +46,7 @@ dev = [
     "tox-uv>=1.11.3",
 
     "mypy>=0.991",
+    "types-pyyaml>=6.0.0",
 
     "ruff>=0.11.5",
 

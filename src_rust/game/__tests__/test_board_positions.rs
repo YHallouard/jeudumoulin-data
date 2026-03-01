@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::game::{Board, Move, Phase, Player};
+    use crate::game::{Board, Player};
 
     #[test]
     fn test_free_positions_empty_board() {

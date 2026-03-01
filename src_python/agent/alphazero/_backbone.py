@@ -68,7 +68,7 @@ class GraphConvLayer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x if self.use_residual else None
-        x = torch.matmul(self.adjacency, x)
+        x = torch.matmul(self.adjacency, x)  # type: ignore[arg-type]
         x = torch.matmul(x, self.weight) + self.bias
         x = self.norm(x)
         if residual is not None:
@@ -214,7 +214,7 @@ class GraphConvBackbone(nn.Module):
 
         x = torch.cat([board, graph_global, player, phase])
         x = self.fusion(x)
-        return x
+        return x  # type: ignore[return-value]
 
 
 BackboneConfig = MLPBackboneConfig | GraphConvBackboneConfig
