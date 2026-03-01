@@ -8,6 +8,7 @@ from jinja2 import Environment
 from prefect import task
 
 
+# NOTE: Not used anymore, but kept because i'm still thinking
 @task(name="load-config")
 def load_training_config(config_path: str) -> dict[str, Any]:
     with open(config_path) as f:

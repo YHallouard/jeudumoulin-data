@@ -1,3 +1,5 @@
+from typing import Any
+
 from agent.alphazero._trainer import (
     AlphaZeroTrainer,
     evaluate_task,
@@ -21,17 +23,16 @@ from cli.train._train_alphazero import TrainAlphazeroConfig, init_alphazero_agen
 from cli.train._train_dqn import TrainDQNConfig, init_dqn_agent
 from prefect import flow
 
-from workflows._tasks import detect_compute_device, load_training_config
+from workflows._tasks import detect_compute_device
 
 DEFAULT_MLFLOW_TRACKING_URI = "https://mlflow.yannhallouard.com"
 
 
 @flow(name="train-alphazero", log_prints=True)
 def train_alphazero_flow(
-    config_path: str,
+    raw_config: dict[str, Any],
     mlflow_tracking_uri: str = DEFAULT_MLFLOW_TRACKING_URI,
 ) -> dict:
-    raw_config = load_training_config(config_path)
     device = detect_compute_device()
     raw_config["agent"]["device"] = device
 
@@ -95,10 +96,9 @@ def train_alphazero_flow(
 
 @flow(name="train-dqn", log_prints=True)
 def train_dqn_flow(
-    config_path: str,
+    raw_config: dict[str, Any],
     mlflow_tracking_uri: str = DEFAULT_MLFLOW_TRACKING_URI,
 ) -> dict:
-    raw_config = load_training_config(config_path)
     device = detect_compute_device()
     raw_config["agent"]["device"] = device
 
