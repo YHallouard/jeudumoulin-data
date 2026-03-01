@@ -92,7 +92,7 @@ class ExperienceReplayBuffer:
             ValueError: If batch_size > len(buffer)
         """
         if batch_size > len(self.buffer):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY003
                 f"Cannot sample {batch_size} transitions from buffer with only {len(self.buffer)} transitions"
             )
 
@@ -242,7 +242,7 @@ class PrioritizedExperienceReplayBuffer(ExperienceReplayBuffer):
             where weights are importance sampling weights for correcting bias.
         """
         if batch_size > len(self.buffer):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY003
                 f"Cannot sample {batch_size} transitions from buffer with only {len(self.buffer)} transitions"
             )
 

@@ -103,7 +103,7 @@ class GraphConvBackbone(nn.Module):
 
         self.graph_layers = nn.ModuleList()
         if not isinstance(self.adjacency, torch.Tensor):
-            raise ValueError("Adjacency matrix must be a torch.Tensor")
+            raise TypeError("Adjacency matrix must be a torch.Tensor")  # noqa: TRY003
         self.graph_layers.append(GraphConvLayer(3, self.config.graph_layer_hidden_dim, self.adjacency))
 
         for i in range(1, config.num_graph_layers):

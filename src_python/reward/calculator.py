@@ -281,7 +281,7 @@ class RewardCalculator:
         embedding = board.to_embed()
         positions = []
 
-        # Board squares are at indices 5-76 (24 positions × 3 states each)
+        # Board squares are at indices 5-76 (24 positions x 3 states each)
         # Format for each position: [white, black, empty]
         for pos in range(24):
             base_idx = 5 + (pos * 3)

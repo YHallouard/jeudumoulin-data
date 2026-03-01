@@ -3,7 +3,7 @@ from agent.alphazero._base import Agent
 
 class RandomAgent(Agent):
     def __init__(self) -> None:
-        self.model = None  # type: ignore
+        self.model = None  # type: ignore[assignment]
 
     def predict(
         self, state_embedding: list[float], legal_moves: list[list[int | None]]
