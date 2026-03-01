@@ -200,6 +200,7 @@ pub fn execute_episode(
 }
 
 #[pyfunction]
+#[allow(clippy::useless_conversion)]
 pub fn generate_train_examples(
     py: Python,
     agent: PyObject,
