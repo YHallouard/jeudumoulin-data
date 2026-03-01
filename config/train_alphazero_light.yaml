@@ -27,22 +27,22 @@ config:
         output_dim: 1
     device: mps
   training:
-    iterations: 100
-    episodes: 10
+    iterations: 1000
+    episodes: 50
     simulations: 2000
     max_episode_steps: 300
-    epochs: 20
-    replay_buffer_size: 20000
-    batch_size: 128
+    epochs: 10
+    replay_buffer_size: 200000
+    batch_size: 256
     learning_rate: 0.001
     lr_scheduler_config:
       model_type: cosine_warm_rest_lr
-      T_0: 20
+      T_0: 50
       T_mult: 1
       min_lr: 5e-5
       last_epoch: -1
-    temperature: 1.0
-    save_frequency: 10
-    eval_frequency: 10
+    temperature: 1.2
+    save_frequency: 100
+    eval_frequency: 50
     save_folder: models/alphazero_light
     verbose: true
