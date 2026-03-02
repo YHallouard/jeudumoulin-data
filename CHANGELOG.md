@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.2.0 (2026-03-02)
+
+### Bug Fixes
+
+- Typo ([#9](https://github.com/YHallouard/jeudumoulin-data/pull/9),
+  [`bc74a8a`](https://github.com/YHallouard/jeudumoulin-data/commit/bc74a8a09b8a8281e1027436cf0f4ce4b25cf6e9))
+
+### Features
+
+- Stop flows ([#8](https://github.com/YHallouard/jeudumoulin-data/pull/8),
+  [`ed12a1b`](https://github.com/YHallouard/jeudumoulin-data/commit/ed12a1b38e823fc8741d58cc56228e130c6fc8e4))
+
+
 ## v1.1.2 (2026-03-02)
 
 ### Bug Fixes
