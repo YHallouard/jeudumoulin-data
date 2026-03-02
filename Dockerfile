@@ -19,13 +19,14 @@ COPY src_rust/ ./src_rust/
 COPY src_python/ ./src_python/
 
 RUN uv sync --frozen
+RUN uv run maturin develop --release
 
 FROM python:3.13-slim
 
 WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
-COPY src_python/ ./src_python/
+COPY --from=builder /app/src_python/ ./src_python/
 
 ENV PATH="/app/.venv/bin:${PATH}"
 ENV PYTHONPATH="/app/src_python"
