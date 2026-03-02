@@ -65,7 +65,7 @@ def train_alphazero_flow(
 
     stop_requested = False
 
-    def handle_stop_signal(signum, frame):
+    def handle_stop_signal(signum: int, frame: Any) -> None:
         nonlocal stop_requested
         stop_requested = True
 
@@ -147,7 +147,7 @@ def train_dqn_flow(
 
     stop_requested = False
 
-    def handle_stop_signal(signum, frame):
+    def handle_stop_signal(signum: int, frame: Any) -> None:
         nonlocal stop_requested
         stop_requested = True
 
