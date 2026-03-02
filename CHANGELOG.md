@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.3.0 (2026-03-02)
+
+### Features
+
+- Build docker with jdm_ru ([#10](https://github.com/YHallouard/jeudumoulin-data/pull/10),
+  [`5d651cf`](https://github.com/YHallouard/jeudumoulin-data/commit/5d651cf566c0f57d0f95e21a1d89751b7affad8a))
+
+
 ## v1.2.0 (2026-03-02)
 
 ### Bug Fixes
