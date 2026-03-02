@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.1.2 (2026-03-02)
+
+### Bug Fixes
+
+- Deploy ([#7](https://github.com/YHallouard/jeudumoulin-data/pull/7),
+  [`0aa0d4c`](https://github.com/YHallouard/jeudumoulin-data/commit/0aa0d4c2f043cfd318811df22645be56a8e2fc99))
+
+
 ## v1.1.1 (2026-03-02)
 
 ### Bug Fixes
