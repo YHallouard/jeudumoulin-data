@@ -1,0 +1,33 @@
+FROM python:3.13-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+COPY pyproject.toml uv.lock Cargo.toml Cargo.lock ./
+COPY src_rust/ ./src_rust/
+COPY src_python/ ./src_python/
+COPY config/ ./config/
+
+RUN uv sync --frozen
+
+FROM python:3.13-slim
+
+WORKDIR /app
+
+COPY --from=builder /app /app
+COPY --from=builder /root/.local /root/.local
+
+ENV PATH="/app/.venv/bin:${PATH}"
+ENV PYTHONPATH="/app/src_python"
+
+COPY config/ ./config/
