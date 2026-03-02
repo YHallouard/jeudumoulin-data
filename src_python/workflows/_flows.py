@@ -1,3 +1,4 @@
+import signal
 from typing import Any
 
 from agent.alphazero._trainer import (
@@ -62,34 +63,49 @@ def train_alphazero_flow(
         eval_frequency=training.eval_frequency,
     )
 
-    for iteration in range(training.iterations):
-        self_play_task(
-            trainer,
-            episodes=training.episodes,
-            simulations_per_move=training.simulations,
-            max_episode_steps=training.max_episode_steps,
-            temperature=training.temperature,
-        )
+    stop_requested = False
 
-        losses = train_on_buffer_task(trainer, epochs=training.epochs, verbose=training.verbose)
+    def handle_stop_signal(signum, frame):
+        nonlocal stop_requested
+        stop_requested = True
 
-        eval_metrics = None
-        if training.eval_frequency and iteration % training.eval_frequency == 0:
-            eval_metrics = evaluate_task(trainer, num_games=50, opponent_simulations=2000, verbose=training.verbose)
+    prev_sigterm_handler = signal.signal(signal.SIGTERM, handle_stop_signal)
+    prev_sigint_handler = signal.signal(signal.SIGINT, handle_stop_signal)
 
-        metrics = {
-            "iteration": iteration + 1,
-            "buffer_size": len(trainer.replay_buffer),
-            "avg_policy_loss": losses["avg_policy_loss"],
-            "avg_value_loss": losses["avg_value_loss"],
-            "avg_total_loss": losses["avg_total_loss"],
-            "eval_metrics": eval_metrics,
-        }
+    try:
+        for iteration in range(training.iterations):
+            if stop_requested:
+                break
 
-        log_iteration_metrics_task(trainer, metrics, iteration)
+            self_play_task(
+                trainer,
+                episodes=training.episodes,
+                simulations_per_move=training.simulations,
+                max_episode_steps=training.max_episode_steps,
+                temperature=training.temperature,
+            )
 
-    register_model_task(trainer)
-    finish_mlflow_task(trainer)
+            losses = train_on_buffer_task(trainer, epochs=training.epochs, verbose=training.verbose)
+
+            eval_metrics = None
+            if training.eval_frequency and iteration % training.eval_frequency == 0:
+                eval_metrics = evaluate_task(trainer, num_games=50, opponent_simulations=2000, verbose=training.verbose)
+
+            metrics = {
+                "iteration": iteration + 1,
+                "buffer_size": len(trainer.replay_buffer),
+                "avg_policy_loss": losses["avg_policy_loss"],
+                "avg_value_loss": losses["avg_value_loss"],
+                "avg_total_loss": losses["avg_total_loss"],
+                "eval_metrics": eval_metrics,
+            }
+
+            log_iteration_metrics_task(trainer, metrics, iteration)
+    finally:
+        signal.signal(signal.SIGTERM, prev_sigterm_handler)
+        signal.signal(signal.SIGINT, prev_sigint_handler)
+        register_model_task(trainer)
+        finish_mlflow_task(trainer)
 
     return trainer._get_training_metrics()
 
@@ -129,30 +145,45 @@ def train_dqn_flow(
 
     batch_size = training.eval_frequency if training.eval_frequency else training.episodes
 
-    for batch_start in range(0, training.episodes, batch_size):
-        actual_batch = min(batch_size, training.episodes - batch_start)
+    stop_requested = False
 
-        dqn_episode_batch_task(
-            trainer,
-            num_episodes=actual_batch,
-            epsilon_start=max(training.epsilon_end, training.epsilon_start * (training.epsilon_decay**batch_start)),
-            epsilon_end=training.epsilon_end,
-            epsilon_decay=training.epsilon_decay,
-            opponent=training.opponent,
-            max_steps_per_episode=training.max_steps,
-            verbose=training.verbose,
-        )
+    def handle_stop_signal(signum, frame):
+        nonlocal stop_requested
+        stop_requested = True
 
-        if training.eval_frequency and (batch_start + actual_batch) % training.eval_frequency == 0:
-            eval_metrics = dqn_evaluate_task(
+    prev_sigterm_handler = signal.signal(signal.SIGTERM, handle_stop_signal)
+    prev_sigint_handler = signal.signal(signal.SIGINT, handle_stop_signal)
+
+    try:
+        for batch_start in range(0, training.episodes, batch_size):
+            if stop_requested:
+                break
+
+            actual_batch = min(batch_size, training.episodes - batch_start)
+
+            dqn_episode_batch_task(
                 trainer,
-                num_games=training.eval_games,
+                num_episodes=actual_batch,
+                epsilon_start=max(training.epsilon_end, training.epsilon_start * (training.epsilon_decay**batch_start)),
+                epsilon_end=training.epsilon_end,
+                epsilon_decay=training.epsilon_decay,
                 opponent=training.opponent,
+                max_steps_per_episode=training.max_steps,
                 verbose=training.verbose,
             )
-            dqn_log_eval_metrics_task(trainer, eval_metrics, batch_start + actual_batch)
 
-    dqn_register_model_task(trainer)
-    dqn_finish_mlflow_task(trainer)
+            if training.eval_frequency and (batch_start + actual_batch) % training.eval_frequency == 0:
+                eval_metrics = dqn_evaluate_task(
+                    trainer,
+                    num_games=training.eval_games,
+                    opponent=training.opponent,
+                    verbose=training.verbose,
+                )
+                dqn_log_eval_metrics_task(trainer, eval_metrics, batch_start + actual_batch)
+    finally:
+        signal.signal(signal.SIGTERM, prev_sigterm_handler)
+        signal.signal(signal.SIGINT, prev_sigint_handler)
+        dqn_register_model_task(trainer)
+        dqn_finish_mlflow_task(trainer)
 
     return trainer._get_training_metrics()
