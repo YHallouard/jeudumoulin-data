@@ -60,7 +60,6 @@ Thumbs.db
 
 # Rust
 target/
-Cargo.lock
 
 # Jupyter
 .ipynb_checkpoints/
