@@ -3,6 +3,8 @@ use pyo3::types::{PyDict, PyList, PyTuple};
 use rand::Rng;
 use std::collections::HashMap;
 
+use std::time::Instant;
+
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::game::{Board, Move, Player};
@@ -222,8 +224,11 @@ pub fn generate_train_examples(
     );
     pb.set_message("Self-play episodes");
 
+    let global_start = Instant::now();
+
     for episode_idx in 0..num_episodes {
         pb.set_message(format!("Episode {}/{}", episode_idx + 1, num_episodes));
+        let episode_start = Instant::now();
 
         let examples = execute_episode(
             py,
@@ -234,12 +239,24 @@ pub fn generate_train_examples(
             &pb,
         )?;
 
+        let num_examples = examples.len();
         for example in examples {
             all_state_embeddings.push(example.state_embedding);
             all_legal_moves.push(example.legal_moves);
             all_policy_labels.push(example.policy_labels);
             all_value_labels.push(example.value_label);
         }
+
+        let episode_elapsed = episode_start.elapsed();
+        let total_elapsed = global_start.elapsed();
+        println!(
+            "[self-play] episode {}/{} done in {:.1}s ({} steps) | total elapsed: {:.1}s",
+            episode_idx + 1,
+            num_episodes,
+            episode_elapsed.as_secs_f64(),
+            num_examples,
+            total_elapsed.as_secs_f64(),
+        );
 
         pb.inc(1);
     }
