@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.4.0 (2026-03-06)
+
+### Features
+
+- Add logs for prefect in rust ([#11](https://github.com/YHallouard/jeudumoulin-data/pull/11),
+  [`4949d76`](https://github.com/YHallouard/jeudumoulin-data/commit/4949d764995aab4624af8ce02b8f0a8cc6f45b65))
+
+
 ## v1.3.0 (2026-03-02)
 
 ### Features
