@@ -69,7 +69,7 @@ class AlphaZeroTrainer:
         buffer_size: int = 10000,
         device: str = "cpu",
         mlflow_tracking_uri: str = "http://localhost:5001",
-        mlflow_experiment: str = "alphazero",
+        mlflow_experiment: str = "jeudumoulin/alphazero",
     ):
         self.agent = agent
         self.agent.model.to("cpu")

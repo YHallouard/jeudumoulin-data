@@ -25,7 +25,7 @@ config:
         hidden_dim: 512
         dropout_rate: 0.2
         output_dim: 1
-    device: mps
+    device: cpu
   training:
     iterations: 1000
     episodes: 50

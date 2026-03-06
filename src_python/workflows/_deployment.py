@@ -2,8 +2,8 @@ from cli.utils import yaml_arg
 
 from workflows._flows import train_alphazero_flow, train_dqn_flow
 
-IMAGE = "ghcr.io/yhallouard/jeudumoulin/jeudumoulin-worker:latest"
-MLFLOW_TRACKING_URI = "http://mlflow.mlops.svc.cluster.local:5000"
+IMAGE = "ghcr.io/yhallouard/jeudumoulin/jeudumoulin-worker:v1.3.0"
+MLFLOW_TRACKING_URI = "http://mlflow.mlops.svc.cluster.local"
 
 if __name__ == "__main__":
     alphazero_config = yaml_arg("config/train_alphazero_light.yaml")["config"]
