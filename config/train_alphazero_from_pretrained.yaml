@@ -12,6 +12,20 @@ config:
     replay_buffer_size: 20000
     batch_size: 64
     learning_rate: 0.0003
+    lr_scheduler_config:
+      model_type: cosine_warm_rest_lr
+      T_0: 10
+      T_mult: 1
+      min_lr: 5e-5
+      last_epoch: -1
     temperature: 1.0
+    save_frequency: 10
+    eval_frequency: 10
     save_folder: models/alphazero
     verbose: true
+    # Uncomment to resume from a full checkpoint saved in MinIO:
+    # checkpoint:
+    #   s3_prefix: checkpoints/<flow-run-id>/iter_0010
+    #   load_buffer: true
+    #   load_optimizer: true
+    #   start_iteration: 10

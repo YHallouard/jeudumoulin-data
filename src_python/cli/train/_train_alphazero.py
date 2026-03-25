@@ -16,6 +16,13 @@ class FromPretrainedAlphazeroAgentConfig(BaseModel):
     device: Literal["cpu", "cuda", "mps"] = "cpu"
 
 
+class CheckpointConfig(BaseModel):
+    s3_prefix: str          # e.g. "checkpoints/{run_id}/iter_0010"
+    load_buffer: bool = True
+    load_optimizer: bool = True
+    start_iteration: int = 0
+
+
 @singledispatch
 def init_alphazero_agent(config: Any) -> AlphaZeroAgent:
     raise NotImplementedError(f"Initializing model from {config} is not implemented")
@@ -46,7 +53,7 @@ class TrainAlphazeroConfig(BaseModel):
         save_folder: Path
         save_frequency: int
         eval_frequency: int
-        checkpoint: Path | None = None
+        checkpoint: CheckpointConfig | None = None
         verbose: bool = True
 
     strategy: str = "alphazero"

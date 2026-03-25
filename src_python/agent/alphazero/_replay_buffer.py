@@ -1,3 +1,4 @@
+import pickle
 import random
 from collections import deque
 
@@ -30,6 +31,14 @@ class AlphaZeroReplayBuffer:
 
     def clear(self) -> None:
         self.buffer.clear()
+
+    def to_bytes(self) -> bytes:
+        return pickle.dumps(list(self.buffer))
+
+    def load_from_bytes(self, data: bytes) -> None:
+        items = pickle.loads(data)  # noqa: S301
+        self.buffer.clear()
+        self.buffer.extend(items)
 
     def get_statistics(self) -> dict:
         if len(self.buffer) == 0:
