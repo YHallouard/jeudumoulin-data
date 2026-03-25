@@ -8,7 +8,7 @@ from agent.alphazero import AlphaZeroAgent, AlphaZeroTrainer
 from agent.alphazero._agent import AlphaZeroAgentConfig
 from agent.alphazero._trainer import LRSchedulerConfig
 from pydantic import BaseModel, Field
-from utils.checkpoints import download_agent_files
+from utils.checkpoints import CheckpointHandler, CheckpointStorageConfig, S3CheckpointStorage, get_checkpoint_handler
 
 logger = structlog.get_logger()
 
@@ -51,26 +51,27 @@ TrainingInitConfig = Annotated[
 
 
 @singledispatch
-def _create_agent_from_init(config: Any) -> AlphaZeroAgent:
+def _create_agent_from_init(config: Any, **kwargs: Any) -> AlphaZeroAgent:
     raise NotImplementedError(f"Unsupported init strategy for CLI: {config.strategy}")  # noqa: TRY003
 
 
 @_create_agent_from_init.register(NewModelInit)
-def _(config: NewModelInit) -> AlphaZeroAgent:
+def _(config: NewModelInit, **kwargs: Any) -> AlphaZeroAgent:
     agent_config = AlphaZeroAgentConfig(model=config.agent.model, device=config.device)
     return AlphaZeroAgent(config=agent_config)
 
 
 @_create_agent_from_init.register(LocalCheckpointInit)
-def _(config: LocalCheckpointInit) -> AlphaZeroAgent:
+def _(config: LocalCheckpointInit, **kwargs: Any) -> AlphaZeroAgent:
     return AlphaZeroAgent.from_pretrained(config.model_path, device=config.device)
 
 
 @_create_agent_from_init.register(S3CheckpointInit)
-def _(init: S3CheckpointInit) -> AlphaZeroAgent:
+def _(init: S3CheckpointInit, **kwargs: Any) -> AlphaZeroAgent:
+    handler: CheckpointHandler = kwargs.get("handler") or get_checkpoint_handler(S3CheckpointStorage())
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        download_agent_files(init.s3_prefix, tmp_path)
+        handler.download_agent_files(init.s3_prefix, tmp_path)
         return AlphaZeroAgent.from_pretrained(tmp_path, device=init.device)
 
 
@@ -99,6 +100,7 @@ class TrainAlphazeroConfig(BaseModel):
     strategy: str = "alphazero"
     init: TrainingInitConfig
     training: TrainingConfig
+    checkpoint_storage: CheckpointStorageConfig = S3CheckpointStorage()
 
 
 # ---------------------------------------------------------------------------

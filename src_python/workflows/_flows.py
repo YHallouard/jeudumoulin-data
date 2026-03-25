@@ -6,6 +6,7 @@ import structlog
 from agent.alphazero._agent import AlphaZeroAgent, AlphaZeroAgentConfig
 from agent.alphazero._trainer import (
     AlphaZeroTrainer,
+    EvaluateMetrics,
     IterationMetrics,
     evaluate_task,
     finish_mlflow_task,
@@ -32,15 +33,15 @@ from cli.train._train_alphazero import (
 )
 from cli.train._train_dqn import TrainDQNConfig, init_dqn_agent
 from prefect import flow
-from prefect.context import get_run_context
-from prefect.deployments import run_deployment
+from pydantic import BaseModel
 from utils.checkpoints import (
-    cleanup_weights,
-    download_weights,
-    restore_checkpoint_state,
-    save_full_checkpoint_task,
-    upload_weights,
+    CheckpointHandler,
+    CheckpointStorageConfig,
+    S3CheckpointStorage,
+    get_checkpoint_handler,
+    save_checkpoint_task,
 )
+from utils.prefect.deployments import get_execution_id, run_deployment
 
 from workflows._tasks import detect_compute_device
 
@@ -48,6 +49,52 @@ logger = structlog.get_logger(__name__)
 
 DEFAULT_MLFLOW_TRACKING_URI = "https://mlflow.yannhallouard.com"
 EVAL_DEPLOYMENT_NAME = "evaluate-alphazero/evaluate-alphazero-k8s"
+
+
+# ---------------------------------------------------------------------------
+# Flow result models
+# ---------------------------------------------------------------------------
+
+
+class BufferStatistics(BaseModel):
+    size: int
+    capacity: int
+    fill_ratio: float
+    avg_value: float
+
+class EvaluateAlphazeroInputs(BaseModel):
+    agent_config: AlphaZeroAgentConfig
+    weights_key: str
+    iteration: int
+    checkpoint_storage: CheckpointStorageConfig = S3CheckpointStorage()
+    mlflow_tracking_uri: str = DEFAULT_MLFLOW_TRACKING_URI
+    mlflow_run_id: str = ""
+    num_games: int = 50
+    opponent_simulations: int = 2000
+
+class TrainAlphazeroInputs(BaseModel):
+    config: TrainAlphazeroConfig
+    mlflow_tracking_uri: str
+
+class AlphaZeroTrainingResult(BaseModel):
+    buffer_size: int
+    buffer_statistics: BufferStatistics
+
+class DQNWinCounts(BaseModel):
+    agent: int
+    opponent: int
+    draw: int
+
+class TrainDQNInputs(BaseModel):
+    config: TrainDQNConfig
+    mlflow_tracking_uri: str
+
+class DQNTrainingResult(BaseModel):
+    episode_rewards: list[float]
+    episode_losses: list[float]
+    win_counts: DQNWinCounts
+    total_steps: int
+    buffer_size: int
 
 
 # ---------------------------------------------------------------------------
@@ -75,11 +122,12 @@ def _create_trainer(
     init: TrainingInitConfig,
     training: TrainAlphazeroConfig.TrainingConfig,
     mlflow_tracking_uri: str,
+    handler: CheckpointHandler,
 ) -> tuple[AlphaZeroTrainer, int]:
-    agent = _create_agent_from_init(init)
+    agent = _create_agent_from_init(init, handler=handler)  # handler passed as kwarg for S3 dispatch
     trainer = _make_trainer(agent, training, mlflow_tracking_uri)
     if isinstance(init, S3CheckpointInit):
-        restore_checkpoint_state(trainer, init.s3_prefix, init.load_buffer, init.load_optimizer)
+        handler.restore_checkpoint(trainer, init.s3_prefix, init.load_buffer, init.load_optimizer)
         return trainer, init.start_iteration
     return trainer, 0
 
@@ -90,33 +138,26 @@ def _create_trainer(
 
 
 @flow(name="evaluate-alphazero", log_prints=True)
-def evaluate_alphazero_flow(
-    agent_config: dict[str, Any],
-    weights_s3_key: str,
-    iteration: int,
-    mlflow_tracking_uri: str = DEFAULT_MLFLOW_TRACKING_URI,
-    mlflow_run_id: str = "",
-    num_games: int = 50,
-    opponent_simulations: int = 2000,
-) -> dict:
+def evaluate_alphazero_flow(inputs: EvaluateAlphazeroInputs) -> EvaluateMetrics:
     from agent.alphazero._trainer import StepLRSchedulerConfig
 
-    config = AlphaZeroAgentConfig.model_validate(agent_config)
-    config.device = "cpu"
-    agent = AlphaZeroAgent(config)
-    download_weights(agent, weights_s3_key)
+    handler = get_checkpoint_handler(inputs.checkpoint_storage)
+
+    agent_config = inputs.agent_config.model_copy(update={"device": "cpu"})
+    agent = AlphaZeroAgent(agent_config)
+    handler.download_eval_weights(agent, inputs.weights_key)
 
     trainer = AlphaZeroTrainer(
         agent=agent,
         lr_scheduler_config=StepLRSchedulerConfig(step_size=1, gamma=1.0),
-        mlflow_tracking_uri=mlflow_tracking_uri,
+        mlflow_tracking_uri=inputs.mlflow_tracking_uri,
         mlflow_experiment="alphazero",
     )
 
-    eval_metrics = evaluate_task(trainer, num_games=num_games, opponent_simulations=opponent_simulations, verbose=True)
+    eval_metrics = evaluate_task(trainer, num_games=inputs.num_games, opponent_simulations=inputs.opponent_simulations, verbose=True)
 
-    mlflow.set_tracking_uri(mlflow_tracking_uri)
-    with mlflow.start_run(run_id=mlflow_run_id):
+    mlflow.set_tracking_uri(inputs.mlflow_tracking_uri)
+    with mlflow.start_run(run_id=inputs.mlflow_run_id):
         mlflow.log_metrics(
             {
                 "eval_win_rate": eval_metrics.win_rate,
@@ -124,25 +165,21 @@ def evaluate_alphazero_flow(
                 "eval_draw_rate": eval_metrics.draw_rate,
                 "eval_avg_steps": eval_metrics.avg_steps,
             },
-            step=iteration,
+            step=inputs.iteration,
         )
 
-    cleanup_weights(weights_s3_key)
-    return eval_metrics.model_dump()
+    handler.cleanup_eval_weights(inputs.weights_key)
+    return eval_metrics
 
 
 @flow(name="train-alphazero", log_prints=True)
-def train_alphazero_flow(
-    raw_config: dict[str, Any],
-    mlflow_tracking_uri: str = DEFAULT_MLFLOW_TRACKING_URI,
-) -> dict:
+def train_alphazero_flow(inputs: TrainAlphazeroInputs) -> AlphaZeroTrainingResult:
     device = detect_compute_device()
-    raw_config["init"]["device"] = device
-
-    config = TrainAlphazeroConfig.model_validate(raw_config)
+    config = inputs.config.model_copy(update={"init": inputs.config.init.model_copy(update={"device": device})})
     training = config.training
 
-    trainer, start_iteration = _create_trainer(config.init, training, mlflow_tracking_uri)
+    handler = get_checkpoint_handler(config.checkpoint_storage)
+    trainer, start_iteration = _create_trainer(config.init, training, inputs.mlflow_tracking_uri, handler)
 
     start_mlflow_task(
         trainer,
@@ -157,7 +194,7 @@ def train_alphazero_flow(
     )
 
     mlflow_run_id = trainer.mlflow_logger.run.info.run_id
-    execution_id = str(get_run_context().flow_run.id)
+    execution_id = get_execution_id()
 
     stop_requested = False
 
@@ -186,19 +223,22 @@ def train_alphazero_flow(
             if training.eval_frequency and iteration % training.eval_frequency == 0:
                 logger.info("submitting_async_evaluation", iteration=iteration + 1)
 
-                s3_prefix = f"checkpoints/{execution_id}/iter_{iteration + 1:04d}"
-                save_full_checkpoint_task(trainer, s3_prefix, iteration + 1)
+                prefix = f"checkpoints/{execution_id}/iter_{iteration + 1:04d}"
+                save_checkpoint_task(handler, trainer, prefix, iteration + 1)
 
-                s3_key = upload_weights(trainer.agent, iteration + 1, execution_id)
+                weights_key = handler.upload_eval_weights(trainer.agent, iteration + 1, execution_id)
+                eval_inputs = EvaluateAlphazeroInputs(
+                    agent_config=trainer.agent.config,
+                    weights_key=weights_key,
+                    iteration=iteration + 1,
+                    checkpoint_storage=config.checkpoint_storage,
+                    mlflow_tracking_uri=inputs.mlflow_tracking_uri,
+                    mlflow_run_id=mlflow_run_id,
+                )
                 run_deployment(
-                    name=EVAL_DEPLOYMENT_NAME,
-                    parameters={
-                        "agent_config": trainer.agent.config.model_dump(),
-                        "weights_s3_key": s3_key,
-                        "iteration": iteration + 1,
-                        "mlflow_tracking_uri": mlflow_tracking_uri,
-                        "mlflow_run_id": mlflow_run_id,
-                    },
+                    flow_fn=evaluate_alphazero_flow,
+                    deployment_name=EVAL_DEPLOYMENT_NAME,
+                    parameters={"inputs": eval_inputs.model_dump()},
                     timeout=0,
                 )
 
@@ -215,18 +255,13 @@ def train_alphazero_flow(
         register_model_task(trainer)
         finish_mlflow_task(trainer)
 
-    return trainer._get_training_metrics()
+    return AlphaZeroTrainingResult.model_validate(trainer._get_training_metrics())
 
 
 @flow(name="train-dqn", log_prints=True)
-def train_dqn_flow(
-    raw_config: dict[str, Any],
-    mlflow_tracking_uri: str = DEFAULT_MLFLOW_TRACKING_URI,
-) -> dict:
+def train_dqn_flow(inputs: TrainDQNInputs) -> DQNTrainingResult:
     device = detect_compute_device()
-    raw_config["agent"]["device"] = device
-
-    config = TrainDQNConfig.model_validate(raw_config)
+    config = inputs.config.model_copy(update={"agent": inputs.config.agent.model_copy(update={"device": device})})
     agent = init_dqn_agent(config.agent)
     training = config.training
 
@@ -236,7 +271,7 @@ def train_dqn_flow(
         gamma=training.gamma,
         batch_size=training.batch_size,
         buffer_size=training.buffer_size,
-        mlflow_tracking_uri=mlflow_tracking_uri,
+        mlflow_tracking_uri=inputs.mlflow_tracking_uri,
     )
 
     dqn_start_mlflow_task(
@@ -294,4 +329,4 @@ def train_dqn_flow(
         dqn_register_model_task(trainer)
         dqn_finish_mlflow_task(trainer)
 
-    return trainer._get_training_metrics()
+    return DQNTrainingResult.model_validate(trainer._get_training_metrics())

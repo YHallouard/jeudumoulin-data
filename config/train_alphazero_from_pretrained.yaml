@@ -25,6 +25,11 @@ config:
     save_folder: models/alphazero
     verbose: true
 
+# Checkpoint storage (default: s3). Use local for dev:
+# checkpoint_storage:
+#   storage: local
+#   base_path: ./checkpoints
+
 # To resume from a full S3 checkpoint (model + buffer + optimizer):
 # config:
 #   strategy: alphazero
@@ -35,5 +40,7 @@ config:
 #     load_buffer: true
 #     load_optimizer: true
 #     start_iteration: 10
+#   checkpoint_storage:
+#     storage: s3
 #   training:
 #     ...
