@@ -24,22 +24,25 @@ class AlphaZeroAgent(Agent):
         self._device = config.device
 
     def predict(
-        self, state_embedding: list[float], legal_moves: list[list[int | None]]
-    ) -> tuple[dict[int, float], float]:
+        self,
+        state_embeddings: list[list[float]],
+        legal_moves_batch: list[list[list[int | None]]],
+    ) -> list[tuple[dict[int, float], float]]:
         with torch.no_grad():
-            policy, value = self.model.policy_value(state_embedding, legal_moves)
+            policies, values = self.model.policy_value_batch(state_embeddings, legal_moves_batch)
 
-            if policy.device.type in ("mps", "cuda"):
-                policy_cpu = policy.cpu()
-                value_cpu = value.cpu()
-            else:
-                policy_cpu = policy
-                value_cpu = value
+            needs_cpu = values.device.type in ("mps", "cuda")
+            if needs_cpu:
+                values = values.cpu()
 
-            policy_dict = {i: float(policy_cpu[i].item()) for i in range(len(legal_moves))}
-            value_float = float(value_cpu.squeeze().item())
+            results: list[tuple[dict[int, float], float]] = []
+            for i, policy in enumerate(policies):
+                policy_cpu = policy.cpu() if needs_cpu else policy
+                policy_dict = {j: float(policy_cpu[j].item()) for j in range(len(legal_moves_batch[i]))}
+                value_float = float(values[i].squeeze().item())
+                results.append((policy_dict, value_float))
 
-            return policy_dict, value_float
+            return results
 
     def save_pretrained(self, save_directory: str | Path) -> None:
         path = Path(save_directory)

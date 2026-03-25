@@ -6,7 +6,8 @@ class RandomAgent(Agent):
         self.model = None  # type: ignore[assignment]
 
     def predict(
-        self, state_embedding: list[float], legal_moves: list[list[int | None]]
-    ) -> tuple[dict[int, float], float]:
-        policy_dict = {i: 1.0 / len(legal_moves) for i in range(len(legal_moves))}
-        return policy_dict, 0.0
+        self,
+        state_embeddings: list[list[float]],
+        legal_moves_batch: list[list[list[int | None]]],
+    ) -> list[tuple[dict[int, float], float]]:
+        return [({i: 1.0 / len(moves) for i in range(len(moves))}, 0.0) for moves in legal_moves_batch]

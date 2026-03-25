@@ -54,3 +54,14 @@ class MLPDualNet(Model):
         policy = self.policy_head(state_tensor, legal_moves)
         value = self.value_head(state_tensor)
         return policy, value
+
+    def policy_value_batch(
+        self,
+        state_embeddings: list[list[float]],
+        legal_moves_batch: list[list[list[int | None]]],
+    ) -> tuple[list[torch.Tensor], torch.Tensor]:
+        batch_tensor = torch.tensor(state_embeddings, dtype=torch.float32, device=self.device, requires_grad=False)
+        features = self.backbone(batch_tensor)
+        values = self.value_head(features)
+        policies = [self.policy_head(features[i], legal_moves_batch[i]) for i in range(len(state_embeddings))]
+        return policies, values

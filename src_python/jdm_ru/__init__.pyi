@@ -287,17 +287,17 @@ class AgentProtocol(Protocol):
     """
 
     def predict(
-        self, state_embedding: list[float], legal_moves: list[list[int | None]]
-    ) -> tuple[dict[int, float], float]:
+        self, state_embeddings: list[list[float]], legal_moves_batch: list[list[list[int | None]]]
+    ) -> list[tuple[dict[int, float], float]]:
         """
-        Predict policy and value for a given state.
+        Predict policy and value for a batch of states.
 
         Args:
-            state_embedding: Board state as 77 floats
-            legal_moves: Legal moves as list of [from, to, removed] positions
+            state_embeddings: List of board states, each as 77 floats
+            legal_moves_batch: List of legal moves per state, each move is [from, to, removed]
 
         Returns:
-            Tuple of (policy_dict, value) where:
+            List of (policy_dict, value) tuples where:
             - policy_dict: Maps move index to probability
             - value: Value estimate for the state
         """
@@ -309,16 +309,18 @@ def generate_train_examples(
     num_episodes: int,
     max_episode_steps: int,
     temperature: float,
+    batch_size: int = 8,
 ) -> tuple[list[list[float]], list[list[list[int | None]]], list[list[float]], list[float]]:
     """
     Generate training examples through self-play.
 
     Args:
-        agent: Agent implementing predict(state_embedding, legal_moves) method
+        agent: Agent implementing predict(state_embeddings, legal_moves_batch) method
         num_simulations: Number of MCTS simulations per move
         num_episodes: Number of episodes to generate
         max_episode_steps: Maximum steps per episode
         temperature: Temperature for action selection (higher = more random)
+        batch_size: Number of MCTS simulations to batch together for neural network inference
 
     Returns:
         Tuple of (state_embeddings, legal_moves, policy_labels, value_labels) where:

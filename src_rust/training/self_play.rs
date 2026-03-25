@@ -1,12 +1,11 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
 use rand::Rng;
 use std::collections::HashMap;
-
 use std::time::Instant;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
+use crate::agent::base::PythonAgent;
 use crate::game::{Board, Move, Player};
 use crate::search::{Node, MCTS};
 
@@ -24,72 +23,13 @@ pub struct TrainExample {
     pub value_label: f32,
 }
 
-struct PythonAgent {
-    agent: PyObject,
-}
-
-impl PythonAgent {
-    fn new(agent: PyObject) -> Self {
-        PythonAgent { agent }
-    }
-}
-
-impl crate::agent::base::Agent for PythonAgent {
-    fn predict(&self, state: &Board) -> (HashMap<Move, f32>, f32) {
-        Python::with_gil(|py| {
-            let state_embedding = state.to_embed();
-            let legal_moves = state.legal_moves();
-
-            let legal_moves_as_lists: Vec<Vec<Option<usize>>> = legal_moves
-                .iter()
-                .map(|m| vec![m.from_position, Some(m.to_position), m.removed_position])
-                .collect();
-
-            let py_state_embedding = PyList::new_bound(py, &state_embedding);
-            let py_legal_moves = PyList::new_bound(
-                py,
-                legal_moves_as_lists
-                    .iter()
-                    .map(|m| PyList::new_bound(py, m)),
-            );
-
-            let result = self
-                .agent
-                .call_method1(py, "predict", (py_state_embedding, py_legal_moves))
-                .expect("Failed to call predict");
-
-            let result_tuple: &Bound<PyTuple> = result
-                .downcast_bound::<PyTuple>(py)
-                .expect("Result is not a tuple");
-
-            let policy_item = result_tuple.get_item(0).expect("No policy in result");
-            let policy_dict: &Bound<PyDict> = policy_item
-                .downcast::<PyDict>()
-                .expect("Policy is not a dict");
-
-            let value_item = result_tuple.get_item(1).expect("No value in result");
-            let value: f32 = value_item.extract().expect("Value is not a float");
-
-            let mut action_probs: HashMap<Move, f32> = HashMap::new();
-            for (key, val) in policy_dict.iter() {
-                let move_idx: usize = key.extract().expect("Key is not usize");
-                let prob: f32 = val.extract().expect("Value is not f32");
-                if move_idx < legal_moves.len() {
-                    action_probs.insert(legal_moves[move_idx].clone(), prob);
-                }
-            }
-
-            (action_probs, value)
-        })
-    }
-}
-
 pub fn execute_episode(
     py: Python,
     agent: &PyObject,
     num_simulations: usize,
     max_episode_steps: usize,
     temperature: f64,
+    batch_size: usize,
     pb: &ProgressBar,
 ) -> PyResult<Vec<TrainExample>> {
     let mut train_examples: Vec<TrainExample> = Vec::new();
@@ -104,15 +44,10 @@ pub fn execute_episode(
         episode_step += 1;
         pb.set_message(format!("Step {}/{}", episode_step, max_episode_steps));
 
-        let root = mcts.run(&python_agent, &state, 0, reused_root);
+        let root =
+            mcts.run_batched(&python_agent, &state, 0, reused_root, batch_size);
 
-        let _state_embedding = state.to_embed();
         let legal_moves = state.legal_moves();
-
-        let _legal_moves_as_lists: Vec<Vec<Option<usize>>> = legal_moves
-            .iter()
-            .map(|m| vec![m.from_position, Some(m.to_position), m.removed_position])
-            .collect();
 
         let mut action_probs: HashMap<Move, f32> =
             legal_moves.iter().map(|m| (m.clone(), 0.0)).collect();
@@ -124,11 +59,6 @@ pub fn execute_episode(
                 action_probs.insert(action.clone(), prob);
             }
         }
-
-        let _policy_labels: Vec<f32> = legal_moves
-            .iter()
-            .map(|m| *action_probs.get(m).unwrap_or(&0.0))
-            .collect();
 
         let random_rotation = rand::thread_rng().gen_range(0..4);
         let rotated_state = state.rotate(random_rotation);
@@ -202,6 +132,7 @@ pub fn execute_episode(
 }
 
 #[pyfunction]
+#[pyo3(signature = (agent, num_simulations, num_episodes, max_episode_steps, temperature, batch_size=8))]
 pub fn generate_train_examples(
     py: Python,
     agent: PyObject,
@@ -209,6 +140,7 @@ pub fn generate_train_examples(
     num_episodes: usize,
     max_episode_steps: usize,
     temperature: f64,
+    batch_size: usize,
 ) -> PyResult<TrainExamplesResult> {
     let mut all_state_embeddings: Vec<Vec<f32>> = Vec::new();
     let mut all_legal_moves: Vec<Vec<Vec<Option<usize>>>> = Vec::new();
@@ -236,6 +168,7 @@ pub fn generate_train_examples(
             num_simulations,
             max_episode_steps,
             temperature,
+            batch_size,
             &pb,
         )?;
 

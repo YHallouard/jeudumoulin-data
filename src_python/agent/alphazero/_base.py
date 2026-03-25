@@ -20,22 +20,22 @@ class Model(ABC, torch.nn.Module):
         """
         pass
 
+    @abstractmethod
+    def policy_value_batch(
+        self,
+        state_embeddings: list[list[float]],
+        legal_moves_batch: list[list[list[int | None]]],
+    ) -> tuple[list[torch.Tensor], torch.Tensor]:
+        pass
+
 
 class Agent(ABC):
     model: Model
 
     @abstractmethod
     def predict(
-        self, state_embedding: list[float], legal_moves: list[list[int | None]]
-    ) -> tuple[dict[int, float], float]:
-        """
-        Predict policy and value for a state.
-
-        Args:
-            state_embedding: List of floats from Board.to_embed()
-            legal_moves: List of legal moves as [from, to, removed] lists
-
-        Returns:
-            Tuple of (dict mapping move index to probability, value estimate)
-        """
+        self,
+        state_embeddings: list[list[float]],
+        legal_moves_batch: list[list[list[int | None]]],
+    ) -> list[tuple[dict[int, float], float]]:
         pass

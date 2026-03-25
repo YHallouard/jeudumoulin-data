@@ -59,6 +59,26 @@ def _(config: CosineWarmRestartLRSchedulerConfig, optimizer: torch.optim.Optimiz
     )
 
 
+class TrainingMetrics(BaseModel):
+    avg_policy_loss: float
+    avg_value_loss: float
+    avg_total_loss: float
+
+
+class EvaluateMetrics(BaseModel):
+    win_rate: float
+    loss_rate: float
+    draw_rate: float
+    avg_steps: float
+
+
+class IterationMetrics(BaseModel):
+    iteration: int
+    buffer_size: int
+    training_metrics: TrainingMetrics
+    eval_metrics: EvaluateMetrics | None = None
+
+
 class AlphaZeroTrainer:
     def __init__(
         self,
@@ -95,7 +115,7 @@ class AlphaZeroTrainer:
         self.lr_scheduler_config = lr_scheduler_config
         self.scheduler = get_scheduler(self.lr_scheduler_config, self.optimizer)
 
-        self.iteration_metrics: list[dict] = []
+        self.iteration_metrics: list[IterationMetrics] = []
 
         self.mlflow_logger = MLflowLogger(
             experiment_name=mlflow_experiment,
@@ -176,7 +196,7 @@ class AlphaZeroTrainer:
         save_frequency: int = 1,
         eval_frequency: int = 1,
         verbose: bool = True,
-    ) -> dict:
+    ) -> IterationMetrics:
         logger.info("iteration_start", iteration=iteration + 1)
 
         self.self_play(
@@ -194,34 +214,25 @@ class AlphaZeroTrainer:
         eval_metrics = None
         if eval_frequency and iteration % eval_frequency == 0:
             eval_metrics = self.evaluate(num_games=50, opponent_simulations=2000, verbose=verbose)
-            self.mlflow_logger.log_metrics(
-                {
-                    "eval_win_rate": eval_metrics["win_rate"],
-                    "eval_loss_rate": eval_metrics["loss_rate"],
-                    "eval_draw_rate": eval_metrics["draw_rate"],
-                    "eval_avg_steps": eval_metrics["avg_steps"],
-                },
-                step=iteration + 1,
-            )
+            self.mlflow_logger.log_metrics(eval_metrics.model_dump(), step=iteration + 1)
 
-        metrics = {
-            "iteration": iteration + 1,
-            "buffer_size": len(self.replay_buffer),
-            "avg_policy_loss": losses["avg_policy_loss"],
-            "avg_value_loss": losses["avg_value_loss"],
-            "avg_total_loss": losses["avg_total_loss"],
-            "eval_metrics": eval_metrics,
-        }
+        metrics = IterationMetrics(
+            iteration=iteration + 1,
+            buffer_size=len(self.replay_buffer),
+            training_metrics=losses,
+            eval_metrics=eval_metrics,
+        )
+
         self.iteration_metrics.append(metrics)
 
         self.scheduler.step()
 
         self.mlflow_logger.log_metrics(
             {
-                "policy_loss": metrics["avg_policy_loss"],
-                "value_loss": metrics["avg_value_loss"],
-                "total_loss": metrics["avg_total_loss"],
-                "buffer_size": metrics["buffer_size"],
+                "policy_loss": metrics.training_metrics.avg_policy_loss,
+                "value_loss": metrics.training_metrics.avg_value_loss,
+                "total_loss": metrics.training_metrics.avg_total_loss,
+                "buffer_size": metrics.buffer_size,
                 "learning_rate": self.scheduler.get_last_lr()[0],
             },
             step=iteration + 1,
@@ -236,6 +247,7 @@ class AlphaZeroTrainer:
         simulations_per_move: int,
         max_episode_steps: int,
         temperature: float,
+        mcts_batch_size: int = 8,
     ) -> int:
         self.agent.model.to("cpu")
         self.agent.model.eval()
@@ -247,6 +259,7 @@ class AlphaZeroTrainer:
             episodes,
             max_episode_steps,
             temperature,
+            mcts_batch_size,
         )
 
         num_examples = len(state_embeddings)
@@ -257,7 +270,7 @@ class AlphaZeroTrainer:
 
         return num_examples
 
-    def train_on_buffer(self, epochs: int, verbose: bool = True) -> dict:
+    def train_on_buffer(self, epochs: int, verbose: bool = True) -> TrainingMetrics:
         epoch_policy_losses = []
         epoch_value_losses = []
         epoch_total_losses = []
@@ -301,11 +314,11 @@ class AlphaZeroTrainer:
 
         self.agent.model.to("cpu")
 
-        return {
-            "avg_policy_loss": sum(epoch_policy_losses) / len(epoch_policy_losses) if epoch_policy_losses else 0.0,
-            "avg_value_loss": sum(epoch_value_losses) / len(epoch_value_losses) if epoch_value_losses else 0.0,
-            "avg_total_loss": sum(epoch_total_losses) / len(epoch_total_losses) if epoch_total_losses else 0.0,
-        }
+        return TrainingMetrics(
+            avg_policy_loss=sum(epoch_policy_losses) / len(epoch_policy_losses) if epoch_policy_losses else 0.0,
+            avg_value_loss=sum(epoch_value_losses) / len(epoch_value_losses) if epoch_value_losses else 0.0,
+            avg_total_loss=sum(epoch_total_losses) / len(epoch_total_losses) if epoch_total_losses else 0.0,
+        )
 
     def _train_on_batch(
         self,
@@ -358,7 +371,7 @@ class AlphaZeroTrainer:
         num_games: int = 100,
         opponent_simulations: int = 2000,
         verbose: bool = True,
-    ) -> dict:
+    ) -> EvaluateMetrics:
         from player import AlphaZeroPlayer
 
         self.agent.model.eval()
@@ -412,16 +425,16 @@ class AlphaZeroTrainer:
 
             agent_total_steps.append(step)
 
-        metrics = {
-            "num_games": num_games,
-            "wins": wins,
-            "losses": losses,
-            "draws": draws,
-            "win_rate": wins / num_games,
-            "loss_rate": losses / num_games,
-            "draw_rate": draws / num_games,
-            "avg_steps": sum(agent_total_steps) / len(agent_total_steps),
-        }
+        metrics = EvaluateMetrics(
+            # num_games=num_games,
+            # wins=wins,
+            # losses=losses,
+            # draws=draws,
+            win_rate=wins / num_games,
+            loss_rate=losses / num_games,
+            draw_rate=draws / num_games,
+            avg_steps=sum(agent_total_steps) / len(agent_total_steps),
+        )
 
         if verbose:
             logger.info(
@@ -429,12 +442,12 @@ class AlphaZeroTrainer:
                 num_games=num_games,
                 opponent_simulations=opponent_simulations,
                 wins=wins,
-                win_rate=metrics["win_rate"],
+                win_rate=metrics.win_rate,
                 losses=losses,
-                loss_rate=metrics["loss_rate"],
+                loss_rate=metrics.loss_rate,
                 draws=draws,
-                draw_rate=metrics["draw_rate"],
-                avg_steps=metrics["avg_steps"],
+                draw_rate=metrics.draw_rate,
+                avg_steps=metrics.avg_steps,
             )
 
         return metrics
@@ -477,7 +490,6 @@ class AlphaZeroTrainer:
 
     def _get_training_metrics(self) -> dict:
         return {
-            "iteration_metrics": self.iteration_metrics,
             "buffer_size": len(self.replay_buffer),
             "buffer_statistics": self.replay_buffer.get_statistics(),
         }
@@ -513,56 +525,58 @@ def start_mlflow_task(
     )
 
 
-@task(name="self-play")
+@task(name="self-play", persist_result=False)
 def self_play_task(
     trainer: AlphaZeroTrainer,
     episodes: int,
     simulations_per_move: int,
     max_episode_steps: int,
     temperature: float,
+    mcts_batch_size: int = 8,
 ) -> int:
     return trainer.self_play(
         episodes=episodes,
         simulations_per_move=simulations_per_move,
         max_episode_steps=max_episode_steps,
         temperature=temperature,
+        mcts_batch_size=mcts_batch_size,
     )
 
 
-@task(name="train-on-buffer")
-def train_on_buffer_task(trainer: AlphaZeroTrainer, epochs: int, verbose: bool = True) -> dict:
+@task(name="train-on-buffer", persist_result=False)
+def train_on_buffer_task(trainer: AlphaZeroTrainer, epochs: int, verbose: bool = True) -> TrainingMetrics:
     return trainer.train_on_buffer(epochs=epochs, verbose=verbose)
 
 
-@task(name="save-checkpoint")
+@task(name="save-checkpoint", persist_result=False)
 def save_checkpoint_task(trainer: AlphaZeroTrainer, save_folder: Path, iteration: int) -> None:
     trainer.save_checkpoint(save_folder, iteration)
 
 
-@task(name="evaluate")
+@task(name="evaluate", persist_result=False)
 def evaluate_task(
     trainer: AlphaZeroTrainer,
     num_games: int = 50,
     opponent_simulations: int = 2000,
     verbose: bool = True,
-) -> dict:
+) -> EvaluateMetrics:
     return trainer.evaluate(num_games=num_games, opponent_simulations=opponent_simulations, verbose=verbose)
 
 
-@task(name="log-iteration-metrics")
-def log_iteration_metrics_task(trainer: AlphaZeroTrainer, metrics: dict, iteration: int) -> None:
+@task(name="log-iteration-metrics", persist_result=False)
+def log_iteration_metrics_task(trainer: AlphaZeroTrainer, metrics: IterationMetrics, iteration: int) -> None:
     trainer.iteration_metrics.append(metrics)
     trainer.scheduler.step()
-    trainer.mlflow_logger.log_metrics(
-        {
-            "policy_loss": metrics["avg_policy_loss"],
-            "value_loss": metrics["avg_value_loss"],
-            "total_loss": metrics["avg_total_loss"],
-            "buffer_size": metrics["buffer_size"],
-            "learning_rate": trainer.scheduler.get_last_lr()[0],
-        },
-        step=iteration + 1,
-    )
+    _metrics = {
+        "policy_loss": metrics.training_metrics.avg_policy_loss,
+        "value_loss": metrics.training_metrics.avg_value_loss,
+        "total_loss": metrics.training_metrics.avg_total_loss,
+        "buffer_size": metrics.buffer_size,
+        "learning_rate": trainer.scheduler.get_last_lr()[0],
+    }
+    if metrics.eval_metrics:
+        _metrics.update(metrics.eval_metrics.model_dump())
+    trainer.mlflow_logger.log_metrics(_metrics, step=iteration + 1)
 
 
 @task(name="register-model")

@@ -1,8 +1,8 @@
 from cli.utils import yaml_arg
 
-from workflows._flows import train_alphazero_flow, train_dqn_flow
+from workflows._flows import evaluate_alphazero_flow, train_alphazero_flow, train_dqn_flow
 
-IMAGE = "ghcr.io/yhallouard/jeudumoulin/jeudumoulin-worker:v1.3.0"
+IMAGE = "ghcr.io/yhallouard/jeudumoulin/jeudumoulin-worker:v1.5.0.dev6"
 MLFLOW_TRACKING_URI = "http://mlflow.mlops.svc.cluster.local"
 
 if __name__ == "__main__":
@@ -17,6 +17,18 @@ if __name__ == "__main__":
         job_variables={"namespace": "mlops"},
         parameters={
             "raw_config": alphazero_config,
+            "mlflow_tracking_uri": MLFLOW_TRACKING_URI,
+        },
+    )
+
+    evaluate_alphazero_flow.deploy(
+        name="evaluate-alphazero-k8s",
+        work_pool_name="kubernetes-homelab",
+        image=IMAGE,
+        build=False,
+        push=False,
+        job_variables={"namespace": "mlops"},
+        parameters={
             "mlflow_tracking_uri": MLFLOW_TRACKING_URI,
         },
     )
