@@ -1,6 +1,7 @@
 config:
   strategy: alphazero
-  agent:
+  init:
+    strategy: local
     model_path: models/alphazero/
     device: cpu
   training:
@@ -23,9 +24,16 @@ config:
     eval_frequency: 10
     save_folder: models/alphazero
     verbose: true
-    # Uncomment to resume from a full checkpoint saved in MinIO:
-    # checkpoint:
-    #   s3_prefix: checkpoints/<flow-run-id>/iter_0010
-    #   load_buffer: true
-    #   load_optimizer: true
-    #   start_iteration: 10
+
+# To resume from a full S3 checkpoint (model + buffer + optimizer):
+# config:
+#   strategy: alphazero
+#   init:
+#     strategy: s3
+#     s3_prefix: checkpoints/<flow-run-id>/iter_0010
+#     device: cpu
+#     load_buffer: true
+#     load_optimizer: true
+#     start_iteration: 10
+#   training:
+#     ...

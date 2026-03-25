@@ -1,12 +1,8 @@
-import io
-import json
-import pickle
 import signal
 from typing import Any
 
 import mlflow
 import structlog
-import torch
 from agent.alphazero._agent import AlphaZeroAgent, AlphaZeroAgentConfig
 from agent.alphazero._trainer import (
     AlphaZeroTrainer,
@@ -28,16 +24,23 @@ from agent.dqn._trainer import (
     dqn_register_model_task,
     dqn_start_mlflow_task,
 )
-from cli.train._train_alphazero import CheckpointConfig, TrainAlphazeroConfig, init_alphazero_agent
+from cli.train._train_alphazero import (
+    S3CheckpointInit,
+    TrainAlphazeroConfig,
+    TrainingInitConfig,
+    _create_agent_from_init,
+)
 from cli.train._train_dqn import TrainDQNConfig, init_dqn_agent
-from connectors.storage.minio import get_minio_client
-from mypy_boto3_s3 import S3Client
-from prefect import flow, task
+from prefect import flow
 from prefect.context import get_run_context
 from prefect.deployments import run_deployment
-from safetensors.torch import load as safetensors_load
-from safetensors.torch import save as safetensors_save
-from settings import settings
+from utils.checkpoints import (
+    cleanup_weights,
+    download_weights,
+    restore_checkpoint_state,
+    save_full_checkpoint_task,
+    upload_weights,
+)
 
 from workflows._tasks import detect_compute_device
 
@@ -47,28 +50,43 @@ DEFAULT_MLFLOW_TRACKING_URI = "https://mlflow.yannhallouard.com"
 EVAL_DEPLOYMENT_NAME = "evaluate-alphazero/evaluate-alphazero-k8s"
 
 
-def _get_s3_client() -> S3Client:
-    return get_minio_client()
+# ---------------------------------------------------------------------------
+# Trainer factory — lives here due to import structure (avoids circular dep)
+# ---------------------------------------------------------------------------
 
 
-def _upload_weights(agent: AlphaZeroAgent, iteration: int, execution_id: str) -> str:
-    state_dict = agent.model.state_dict()
-    weights_bytes = safetensors_save({k: v.cpu() for k, v in state_dict.items()})
+def _make_trainer(
+    agent: AlphaZeroAgent,
+    training: TrainAlphazeroConfig.TrainingConfig,
+    mlflow_tracking_uri: str,
+) -> AlphaZeroTrainer:
+    return AlphaZeroTrainer(
+        agent=agent,
+        lr_scheduler_config=training.lr_scheduler_config,
+        learning_rate=training.learning_rate,
+        batch_size=training.batch_size,
+        buffer_size=training.replay_buffer_size,
+        device=agent.config.device,
+        mlflow_tracking_uri=mlflow_tracking_uri,
+    )
 
-    s3_key = f"eval/{execution_id}/iter_{iteration:04d}.safetensors"
-    s3 = _get_s3_client()
 
-    s3.upload_fileobj(io.BytesIO(weights_bytes), settings.MINIO_BUCKET, s3_key)
-    return s3_key
+def _create_trainer(
+    init: TrainingInitConfig,
+    training: TrainAlphazeroConfig.TrainingConfig,
+    mlflow_tracking_uri: str,
+) -> tuple[AlphaZeroTrainer, int]:
+    agent = _create_agent_from_init(init)
+    trainer = _make_trainer(agent, training, mlflow_tracking_uri)
+    if isinstance(init, S3CheckpointInit):
+        restore_checkpoint_state(trainer, init.s3_prefix, init.load_buffer, init.load_optimizer)
+        return trainer, init.start_iteration
+    return trainer, 0
 
 
-def _download_weights(agent: AlphaZeroAgent, s3_key: str) -> None:
-    s3 = _get_s3_client()
-    buffer = io.BytesIO()
-    s3.download_fileobj(settings.MINIO_BUCKET, s3_key, buffer)
-    buffer.seek(0)
-    state_dict = safetensors_load(buffer.read())
-    agent.model.load_state_dict(state_dict)
+# ---------------------------------------------------------------------------
+# Flows
+# ---------------------------------------------------------------------------
 
 
 @flow(name="evaluate-alphazero", log_prints=True)
@@ -81,12 +99,12 @@ def evaluate_alphazero_flow(
     num_games: int = 50,
     opponent_simulations: int = 2000,
 ) -> dict:
+    from agent.alphazero._trainer import StepLRSchedulerConfig
+
     config = AlphaZeroAgentConfig.model_validate(agent_config)
     config.device = "cpu"
     agent = AlphaZeroAgent(config)
-    _download_weights(agent, weights_s3_key)
-
-    from agent.alphazero._trainer import StepLRSchedulerConfig
+    download_weights(agent, weights_s3_key)
 
     trainer = AlphaZeroTrainer(
         agent=agent,
@@ -95,12 +113,7 @@ def evaluate_alphazero_flow(
         mlflow_experiment="alphazero",
     )
 
-    eval_metrics = evaluate_task(
-        trainer,
-        num_games=num_games,
-        opponent_simulations=opponent_simulations,
-        verbose=True,
-    )
+    eval_metrics = evaluate_task(trainer, num_games=num_games, opponent_simulations=opponent_simulations, verbose=True)
 
     mlflow.set_tracking_uri(mlflow_tracking_uri)
     with mlflow.start_run(run_id=mlflow_run_id):
@@ -114,115 +127,8 @@ def evaluate_alphazero_flow(
             step=iteration,
         )
 
-    _cleanup_weights(weights_s3_key)
-
+    cleanup_weights(weights_s3_key)
     return eval_metrics.model_dump()
-
-
-def _cleanup_weights(s3_key: str) -> None:
-    try:
-        s3 = _get_s3_client()
-        s3.delete_object(Bucket=settings.MINIO_BUCKET, Key=s3_key)
-    except Exception:
-        logger.warning("failed_to_cleanup_weights", s3_key=s3_key)
-
-
-# --- Full checkpoint helpers (MinIO) ---
-
-def _s3_upload_bytes(s3: S3Client, data: bytes, key: str) -> None:
-    s3.upload_fileobj(io.BytesIO(data), settings.MINIO_BUCKET, key)
-
-
-def _s3_download_bytes(s3: S3Client, key: str) -> bytes:
-    buf = io.BytesIO()
-    s3.download_fileobj(settings.MINIO_BUCKET, key, buf)
-    return buf.getvalue()
-
-
-def _save_full_checkpoint_to_s3(trainer: AlphaZeroTrainer, s3_prefix: str, iteration: int) -> None:
-    s3 = _get_s3_client()
-
-    # Model weights
-    model_bytes = safetensors_save({k: v.cpu() for k, v in trainer.agent.model.state_dict().items()})
-    _s3_upload_bytes(s3, model_bytes, f"{s3_prefix}/model.safetensors")
-
-    # Replay buffer
-    _s3_upload_bytes(s3, trainer.replay_buffer.to_bytes(), f"{s3_prefix}/buffer.pkl")
-
-    # Optimizer state
-    opt_buf = io.BytesIO()
-    torch.save(trainer.optimizer.state_dict(), opt_buf)
-    _s3_upload_bytes(s3, opt_buf.getvalue(), f"{s3_prefix}/optimizer.pt")
-
-    # Scheduler state
-    sched_buf = io.BytesIO()
-    torch.save(trainer.scheduler.state_dict(), sched_buf)
-    _s3_upload_bytes(s3, sched_buf.getvalue(), f"{s3_prefix}/scheduler.pt")
-
-    # Meta
-    meta = {
-        "iteration": iteration,
-        "agent_config": trainer.agent.config.model_dump(),
-    }
-    _s3_upload_bytes(s3, json.dumps(meta).encode(), f"{s3_prefix}/meta.json")
-
-    logger.info("full_checkpoint_saved_to_s3", s3_prefix=s3_prefix, iteration=iteration)
-
-
-def _load_full_checkpoint_from_s3(
-    trainer: AlphaZeroTrainer,
-    s3_prefix: str,
-    load_buffer: bool = True,
-    load_optimizer: bool = True,
-) -> int:
-    s3 = _get_s3_client()
-
-    # Model weights
-    model_bytes = _s3_download_bytes(s3, f"{s3_prefix}/model.safetensors")
-    state_dict = safetensors_load(model_bytes)
-    trainer.agent.model.load_state_dict(state_dict)
-    logger.info("checkpoint_model_loaded", s3_prefix=s3_prefix)
-
-    # Replay buffer
-    if load_buffer:
-        buffer_bytes = _s3_download_bytes(s3, f"{s3_prefix}/buffer.pkl")
-        trainer.replay_buffer.load_from_bytes(buffer_bytes)
-        logger.info("checkpoint_buffer_loaded", size=len(trainer.replay_buffer))
-
-    # Optimizer + scheduler
-    if load_optimizer:
-        opt_bytes = _s3_download_bytes(s3, f"{s3_prefix}/optimizer.pt")
-        trainer.optimizer.load_state_dict(torch.load(io.BytesIO(opt_bytes), weights_only=True))
-
-        sched_bytes = _s3_download_bytes(s3, f"{s3_prefix}/scheduler.pt")
-        trainer.scheduler.load_state_dict(torch.load(io.BytesIO(sched_bytes), weights_only=False))
-        logger.info("checkpoint_optimizer_loaded")
-
-    # Meta → return iteration
-    try:
-        meta_bytes = _s3_download_bytes(s3, f"{s3_prefix}/meta.json")
-        meta = json.loads(meta_bytes.decode())
-        return int(meta.get("iteration", 0))
-    except Exception:
-        return 0
-
-
-@task(name="save-full-checkpoint", persist_result=False)
-def save_full_checkpoint_task(trainer: AlphaZeroTrainer, s3_prefix: str, iteration: int) -> None:
-    _save_full_checkpoint_to_s3(trainer, s3_prefix, iteration)
-
-
-@task(name="load-full-checkpoint", persist_result=False)
-def load_full_checkpoint_task(
-    trainer: AlphaZeroTrainer,
-    checkpoint: CheckpointConfig,
-) -> int:
-    return _load_full_checkpoint_from_s3(
-        trainer,
-        s3_prefix=checkpoint.s3_prefix,
-        load_buffer=checkpoint.load_buffer,
-        load_optimizer=checkpoint.load_optimizer,
-    )
 
 
 @flow(name="train-alphazero", log_prints=True)
@@ -231,33 +137,12 @@ def train_alphazero_flow(
     mlflow_tracking_uri: str = DEFAULT_MLFLOW_TRACKING_URI,
 ) -> dict:
     device = detect_compute_device()
-    raw_config["agent"]["device"] = device
+    raw_config["init"]["device"] = device
 
     config = TrainAlphazeroConfig.model_validate(raw_config)
-    agent = init_alphazero_agent(config.agent)
     training = config.training
 
-    trainer = AlphaZeroTrainer(
-        agent=agent,
-        lr_scheduler_config=training.lr_scheduler_config,
-        learning_rate=training.learning_rate,
-        batch_size=training.batch_size,
-        buffer_size=training.replay_buffer_size,
-        device=config.agent.device,
-        mlflow_tracking_uri=mlflow_tracking_uri,
-    )
-
-    # --- Checkpoint restore ---
-    start_iteration = 0
-    if training.checkpoint:
-        logger.info(
-            "loading_checkpoint",
-            s3_prefix=training.checkpoint.s3_prefix,
-            load_buffer=training.checkpoint.load_buffer,
-            load_optimizer=training.checkpoint.load_optimizer,
-        )
-        load_full_checkpoint_task(trainer, training.checkpoint)
-        start_iteration = training.checkpoint.start_iteration
+    trainer, start_iteration = _create_trainer(config.init, training, mlflow_tracking_uri)
 
     start_mlflow_task(
         trainer,
@@ -301,12 +186,10 @@ def train_alphazero_flow(
             if training.eval_frequency and iteration % training.eval_frequency == 0:
                 logger.info("submitting_async_evaluation", iteration=iteration + 1)
 
-                # Save full checkpoint (model + buffer + optimizer) to MinIO
                 s3_prefix = f"checkpoints/{execution_id}/iter_{iteration + 1:04d}"
                 save_full_checkpoint_task(trainer, s3_prefix, iteration + 1)
 
-                # Upload model-only weights for the eval child flow
-                s3_key = _upload_weights(trainer.agent, iteration + 1, execution_id)
+                s3_key = upload_weights(trainer.agent, iteration + 1, execution_id)
                 run_deployment(
                     name=EVAL_DEPLOYMENT_NAME,
                     parameters={
