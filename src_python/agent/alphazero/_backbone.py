@@ -1,6 +1,6 @@
 import copy
 from functools import singledispatch
-from typing import Literal
+from typing import Literal, cast
 
 import torch
 import torch.nn as nn
@@ -63,8 +63,9 @@ class GraphConvLayer(nn.Module):
         self.register_buffer("adjacency", adjacency)
         self.use_residual = use_residual and (in_features == out_features)
 
-        self.weight = nn.Parameter(torch.randn(in_features, out_features))
-        self.bias = nn.Parameter(torch.randn(out_features))
+        self.weight = nn.Parameter(torch.empty(in_features, out_features))
+        self.bias = nn.Parameter(torch.zeros(out_features))
+        nn.init.xavier_uniform_(self.weight)
         self.norm = nn.LayerNorm(out_features)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -187,7 +188,10 @@ class GraphConvBackbone(nn.Module):
             adj[i, j] = 1.0
             adj[j, i] = 1.0
 
-        # Normalisation (D^{-1/2} A D^{-1/2})
+        # Self-loops (standard GCN: Â = A + I)
+        adj = adj + torch.eye(24)
+
+        # Normalisation (D^{-1/2} Â D^{-1/2})
         degree = adj.sum(dim=1)
         degree_inv_sqrt = torch.pow(degree, -0.5)
         degree_inv_sqrt[torch.isinf(degree_inv_sqrt)] = 0.0
@@ -196,26 +200,37 @@ class GraphConvBackbone(nn.Module):
         return adj_normalized
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
-        player = self.player_embedding(torch.argmax(state[0:2]).long())
-        phase = self.phase_embedding(torch.argmax(state[2:5]).long())
-        board = self.board_encoder(state[5:])
+        squeezed = state.dim() == 1
+        if squeezed:
+            state = state.unsqueeze(0)  # (1, 77)
 
-        board_state = state[5:].reshape(24, 3)
+        player_idx = torch.argmax(state[:, 0:2], dim=-1)  # (B,)
+        player = self.player_embedding(player_idx)  # (B, player_embedding_dim)
+
+        phase_idx = torch.argmax(state[:, 2:5], dim=-1)  # (B,)
+        phase = self.phase_embedding(phase_idx)  # (B, phase_embedding_dim)
+
+        board = self.board_encoder(state[:, 5:])  # (B, board_embedding_dim)
+
+        board_state = state[:, 5:].reshape(-1, 24, 3)  # (B, 24, 3)
         graph_features = board_state
 
         for layer in self.graph_layers:
-            graph_features = layer(graph_features)
+            graph_features = layer(graph_features)  # (B, 24, F)
 
         if self.attention_pool is not None:
-            attention_weights = self.attention_pool(graph_features)
-            attention_weights = torch.softmax(attention_weights, dim=0)
-            graph_global = torch.sum(graph_features * attention_weights, dim=0)
+            attention_weights = self.attention_pool(graph_features)  # (B, 24, 1)
+            attention_weights = torch.softmax(attention_weights, dim=-2)  # softmax over nodes
+            graph_global = torch.sum(graph_features * attention_weights, dim=-2)  # (B, F)
         else:
-            graph_global = torch.max(graph_features, dim=0)[0]
+            graph_global = torch.max(graph_features, dim=-2)[0]  # (B, F)
 
-        x = torch.cat([board, graph_global, player, phase])
-        x = self.fusion(x)
-        return x
+        x = torch.cat([board, graph_global, player, phase], dim=-1)  # (B, fusion_input_dim)
+        x = self.fusion(x)  # (B, output_dim)
+
+        if squeezed:
+            x = x.squeeze(0)
+        return cast(torch.Tensor, x)
 
 
 BackboneConfig = MLPBackboneConfig | GraphConvBackboneConfig

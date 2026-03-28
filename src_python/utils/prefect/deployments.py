@@ -10,7 +10,7 @@ from prefect.exceptions import MissingContextError
 def get_execution_id() -> str:
     """Return the Prefect flow run ID, or a random UUID when running outside Prefect."""
     try:
-        return str(get_run_context().flow_run.id)
+        return str(get_run_context().flow_run.id)  # type: ignore[union-attr]
     except MissingContextError:
         return str(uuid.uuid4())
 

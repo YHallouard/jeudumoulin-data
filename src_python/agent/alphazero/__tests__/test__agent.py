@@ -2,7 +2,7 @@ import unittest
 
 import torch
 from agent.alphazero._agent import AlphaZeroAgent, AlphaZeroAgentConfig
-from agent.alphazero._backbone import MLPBackboneConfig
+from agent.alphazero._backbone import GraphConvBackboneConfig, MLPBackboneConfig
 from agent.alphazero._conditional_policy import SemiConditionalPolicyHeadConfig
 from agent.alphazero._models import MLPDualNetConfig
 from agent.alphazero._position import PositionalEmbeddingConfig
@@ -109,6 +109,67 @@ class TestPolicyValueBatch(unittest.TestCase):
         torch.testing.assert_close(batch_policies[1], single_p2)
         torch.testing.assert_close(batch_values[0].squeeze(), single_v1.squeeze())
         torch.testing.assert_close(batch_values[1].squeeze(), single_v2.squeeze())
+
+
+TOY_GRAPH_CONFIG = AlphaZeroAgentConfig(
+    model=MLPDualNetConfig(
+        backbone=GraphConvBackboneConfig(
+            player_embedding_dim=4,
+            phase_embedding_dim=4,
+            board_embedding_dim=8,
+            hidden_dim=8,
+            output_dim=8,
+            graph_layer_hidden_dim=8,
+            graph_layer_output_dim=8,
+            num_graph_layers=2,
+            use_attention_pooling=True,
+        ),
+        policy_head=SemiConditionalPolicyHeadConfig(
+            state_embedding_dim=8,
+            embedding=PositionalEmbeddingConfig(embedding_dim=4),
+            from_head_hidden_dim=8,
+            to_head_hidden_dim=8,
+            remove_head_hidden_dim=8,
+        ),
+        value_head=MLPDualNetConfig.ValueHeadConfig(
+            hidden_dim=8,
+            output_dim=1,
+        ),
+    ),
+    device="cpu",
+)
+
+
+class TestGraphConvBatchCompatibility(unittest.TestCase):
+    def setUp(self) -> None:
+        self.agent = AlphaZeroAgent(config=TOY_GRAPH_CONFIG)
+        self.model = self.agent.model
+
+    def test_batch_matches_single(self) -> None:
+        state_1 = [1.0] + [0.0] * 76
+        state_2 = [0.0, 1.0] + [0.0] * 75
+        moves_1: list[list[int | None]] = [[None, 0, None], [None, 3, None]]
+        moves_2: list[list[int | None]] = [[None, 1, None], [None, 2, None], [None, 5, None]]
+
+        self.model.eval()
+        with torch.no_grad():
+            single_p1, single_v1 = self.model.policy_value(state_1, moves_1)
+            single_p2, single_v2 = self.model.policy_value(state_2, moves_2)
+
+            batch_policies, batch_values = self.model.policy_value_batch([state_1, state_2], [moves_1, moves_2])
+
+        torch.testing.assert_close(batch_policies[0], single_p1)
+        torch.testing.assert_close(batch_policies[1], single_p2)
+        torch.testing.assert_close(batch_values[0].squeeze(), single_v1.squeeze())
+        torch.testing.assert_close(batch_values[1].squeeze(), single_v2.squeeze())
+
+    def test_single_item_batch(self) -> None:
+        results = self.agent.predict([DUMMY_STATE], [DUMMY_LEGAL_MOVES])
+        self.assertEqual(len(results), 1)
+        policy_dict, value = results[0]
+        self.assertEqual(len(policy_dict), len(DUMMY_LEGAL_MOVES))
+        self.assertAlmostEqual(sum(policy_dict.values()), 1.0, places=4)
+        self.assertIsInstance(value, float)
 
 
 if __name__ == "__main__":
