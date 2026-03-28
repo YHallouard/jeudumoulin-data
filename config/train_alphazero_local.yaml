@@ -1,0 +1,50 @@
+config:
+  strategy: alphazero
+  checkpoint_storage:
+    storage: local
+    base_path: .local/alphazero_flow_checkpoints
+  init:
+    strategy: new
+    device: cpu
+    agent:
+      model:
+        model_type: mlp_dual_net
+        backbone:
+          model_type: mlp_backbone
+          input_dim: 77
+          num_layers: 1
+          hidden_dim: 128
+          output_dim: 128
+        policy_head:
+          model_type: semi_conditional_policy_head
+          state_embedding_dim: 128
+          embedding:
+            model_type: classic_embedding
+            embedding_dim: 16
+          from_head_hidden_dim: 128
+          to_head_hidden_dim: 128
+          remove_head_hidden_dim: 128
+          from_head_dropout_rate: 0
+          to_head_dropout_rate: 0
+          remove_head_dropout_rate: 0
+        value_head:
+          hidden_dim: 128
+          dropout_rate: 0.1
+          output_dim: 1
+  training:
+    iterations: 2
+    episodes: 1
+    simulations: 32
+    max_episode_steps: 80
+    epochs: 1
+    replay_buffer_size: 4096
+    batch_size: 32
+    learning_rate: 0.001
+    lr_scheduler_config:
+      model_type: step_lr
+      step_size: 1
+      gamma: 1.0
+    temperature: 1.0
+    save_frequency: 1
+    eval_frequency: 1
+    verbose: true

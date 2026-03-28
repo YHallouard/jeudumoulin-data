@@ -51,5 +51,4 @@ config:
     temperature: 1.0
     save_frequency: 10
     eval_frequency: 10
-    save_folder: models/alphazero
     verbose: true

@@ -1,9 +1,10 @@
-import json
+from __future__ import annotations
+
 import random
 import tempfile
 from datetime import datetime
 from functools import singledispatch
-from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import jdm_ru
 import structlog
@@ -12,7 +13,6 @@ from jdm_ru import generate_train_examples
 from monitoring import MLflowLogger
 from prefect import task
 from pydantic import BaseModel
-from safetensors.torch import save_model
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LRScheduler, StepLR
 from tqdm import tqdm  # type: ignore[import-untyped]
 
@@ -22,17 +22,20 @@ from ._agent import AlphaZeroAgent
 from ._conditional_policy import conditional_cross_entropy
 from ._replay_buffer import AlphaZeroReplayBuffer
 
+if TYPE_CHECKING:
+    from utils.checkpoints import CheckpointHandler
+
 logger = structlog.get_logger(__name__)
 
 
 class StepLRSchedulerConfig(BaseModel):
-    model_type: str = "step_lr"
+    model_type: Literal["step_lr"] = "step_lr"
     step_size: int
     gamma: float
 
 
 class CosineWarmRestartLRSchedulerConfig(BaseModel):
-    model_type: str = "cosine_warm_rest_lr"
+    model_type: Literal["cosine_warm_rest_lr"] = "cosine_warm_rest_lr"
     T_0: int
     T_mult: int = 1
     min_lr: float
@@ -132,12 +135,11 @@ class AlphaZeroTrainer:
         max_episode_steps: int,
         epochs_per_iteration: int,
         temperature: float,
-        save_folder: Path,
-        checkpoint_path: Path | None = None,
+        checkpoint_handler: CheckpointHandler | None = None,
         save_frequency: int = 1,
         eval_frequency: int = 1,
         verbose: bool = True,
-    ) -> dict:
+    ) -> dict[str, object]:
         self.start_mlflow(
             num_iterations=num_iterations,
             episodes_per_iteration=episodes_per_iteration,
@@ -159,10 +161,7 @@ class AlphaZeroTrainer:
                 batch_size=self.batch_size,
                 learning_rate=self.learning_rate,
                 buffer_size=self.replay_buffer.max_size,
-                save_folder=str(save_folder),
             )
-
-        save_folder.mkdir(parents=True, exist_ok=True)
 
         for iteration in range(num_iterations):
             self.run_iteration(
@@ -172,7 +171,7 @@ class AlphaZeroTrainer:
                 max_episode_steps=max_episode_steps,
                 epochs_per_iteration=epochs_per_iteration,
                 temperature=temperature,
-                save_folder=save_folder,
+                checkpoint_handler=checkpoint_handler,
                 save_frequency=save_frequency,
                 eval_frequency=eval_frequency,
                 verbose=verbose,
@@ -192,7 +191,7 @@ class AlphaZeroTrainer:
         max_episode_steps: int,
         epochs_per_iteration: int,
         temperature: float,
-        save_folder: Path,
+        checkpoint_handler: CheckpointHandler | None = None,
         save_frequency: int = 1,
         eval_frequency: int = 1,
         verbose: bool = True,
@@ -208,8 +207,8 @@ class AlphaZeroTrainer:
 
         losses = self.train_on_buffer(epochs=epochs_per_iteration, verbose=verbose)
 
-        if save_frequency and iteration % save_frequency == 0:
-            self.save_checkpoint(save_folder, iteration)
+        if checkpoint_handler and save_frequency and iteration % save_frequency == 0:
+            checkpoint_handler.save_checkpoint(self, f"iter_{iteration + 1:04d}", iteration + 1)
 
         eval_metrics = None
         if eval_frequency and iteration % eval_frequency == 0:
@@ -357,14 +356,6 @@ class AlphaZeroTrainer:
             batch_value_loss / batch_size,
             (batch_policy_loss + batch_value_loss) / batch_size,
         )
-
-    def save_checkpoint(self, save_folder: Path, iteration: int) -> None:
-        model_path = save_folder / "checkpoints" / f"model_iter{iteration:04d}.safetensors"
-        model_path.parent.mkdir(parents=True, exist_ok=True)
-        save_model(self.agent.model, str(model_path))
-        with open(model_path.parent.parent / "config.json", "w") as f:
-            json.dump(self.agent.config.model_dump(), f, indent=4)
-        logger.info("checkpoint_saved", path=str(model_path), iteration=iteration)
 
     def evaluate(
         self,
@@ -546,11 +537,6 @@ def self_play_task(
 @task(name="train-on-buffer", persist_result=False)
 def train_on_buffer_task(trainer: AlphaZeroTrainer, epochs: int, verbose: bool = True) -> TrainingMetrics:
     return trainer.train_on_buffer(epochs=epochs, verbose=verbose)
-
-
-@task(name="save-checkpoint", persist_result=False)
-def save_checkpoint_task(trainer: AlphaZeroTrainer, save_folder: Path, iteration: int) -> None:
-    trainer.save_checkpoint(save_folder, iteration)
 
 
 @task(name="evaluate", persist_result=False)

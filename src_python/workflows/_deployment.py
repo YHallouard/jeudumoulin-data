@@ -10,11 +10,16 @@ from workflows._flows import (
     train_dqn_flow,
 )
 
-IMAGE = "ghcr.io/yhallouard/jeudumoulin/jeudumoulin-worker:v1.5.0.dev6"
+IMAGE = "ghcr.io/yhallouard/jeudumoulin/jeudumoulin-worker:v1.5.0.dev10"
 MLFLOW_TRACKING_URI = "http://mlflow.mlops.svc.cluster.local"
 
 if __name__ == "__main__":
     alphazero_config = TrainAlphazeroConfig.model_validate(yaml_arg("config/train_alphazero_light.yaml")["config"])
+
+    alphazero_inputs = TrainAlphazeroInputs(
+        config=alphazero_config,
+        mlflow_tracking_uri=MLFLOW_TRACKING_URI,
+    )
 
     train_alphazero_flow.deploy(
         name="train-alphazero-k8s",
@@ -23,9 +28,7 @@ if __name__ == "__main__":
         build=False,
         push=False,
         job_variables={"namespace": "mlops"},
-        parameters={
-            "inputs": TrainAlphazeroInputs(config=alphazero_config, mlflow_tracking_uri=MLFLOW_TRACKING_URI).model_dump(),
-        },
+        parameters={"inputs": alphazero_inputs.model_dump()},
     )
 
     evaluate_alphazero_flow.deploy(

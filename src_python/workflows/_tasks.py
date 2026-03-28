@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import torch
 import yaml
@@ -20,7 +20,7 @@ def load_training_config(config_path: str) -> dict[str, Any]:
 
 
 @task(name="detect-device")
-def detect_compute_device() -> str:
+def detect_compute_device() -> Literal["cpu", "cuda", "mps"]:
     if torch.cuda.is_available():
         return "cuda"
     if torch.backends.mps.is_available():

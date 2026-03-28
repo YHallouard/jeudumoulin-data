@@ -1,21 +1,26 @@
+from __future__ import annotations
+
 import io
 import json
 import shutil
 from abc import ABC, abstractmethod
+from functools import singledispatch
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Literal
 
 import structlog
 import torch
 from agent.alphazero._agent import AlphaZeroAgent
 from agent.alphazero._trainer import AlphaZeroTrainer
 from connectors.storage.minio import get_minio_client
-from mypy_boto3_s3 import S3Client
 from prefect import task
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from safetensors.torch import load as safetensors_load
 from safetensors.torch import save as safetensors_save
 from settings import settings
+
+if TYPE_CHECKING:
+    from mypy_boto3_s3 import S3Client
 
 logger = structlog.get_logger(__name__)
 
@@ -34,10 +39,7 @@ class S3CheckpointStorage(BaseModel):
     storage: Literal["s3"] = "s3"
 
 
-CheckpointStorageConfig = Annotated[
-    LocalCheckpointStorage | S3CheckpointStorage,
-    Field(discriminator="storage"),
-]
+CheckpointStorageConfig = LocalCheckpointStorage | S3CheckpointStorage
 
 
 # ---------------------------------------------------------------------------
@@ -205,10 +207,10 @@ class LocalCheckpointHandler(CheckpointHandler):
 
     def upload_eval_weights(self, agent: AlphaZeroAgent, iteration: int, execution_id: str) -> str:
         key = f"eval/{execution_id}/iter_{iteration:04d}.safetensors"
-        dest = self._resolve(key).parent
-        dest.mkdir(parents=True, exist_ok=True)
+        path = self._base / key
+        path.parent.mkdir(parents=True, exist_ok=True)
         weights_bytes = safetensors_save({k: v.cpu() for k, v in agent.model.state_dict().items()})
-        (dest / f"iter_{iteration:04d}.safetensors").write_bytes(weights_bytes)
+        path.write_bytes(weights_bytes)
         return key
 
     def download_eval_weights(self, agent: AlphaZeroAgent, key: str) -> None:
@@ -228,9 +230,18 @@ class LocalCheckpointHandler(CheckpointHandler):
 # ---------------------------------------------------------------------------
 
 
+@singledispatch
 def get_checkpoint_handler(config: LocalCheckpointStorage | S3CheckpointStorage) -> CheckpointHandler:
-    if isinstance(config, LocalCheckpointStorage):
-        return LocalCheckpointHandler(config.base_path)
+    raise NotImplementedError(f"Unsupported storage config: {type(config)}")
+
+
+@get_checkpoint_handler.register
+def _from_local_storage(config: LocalCheckpointStorage) -> LocalCheckpointHandler:
+    return LocalCheckpointHandler(config.base_path)
+
+
+@get_checkpoint_handler.register
+def _from_s3_storage(config: S3CheckpointStorage) -> S3CheckpointHandler:
     return S3CheckpointHandler()
 
 

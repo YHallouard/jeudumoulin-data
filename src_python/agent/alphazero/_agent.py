@@ -46,7 +46,7 @@ class AlphaZeroAgent(Agent):
 
     def save_pretrained(self, save_directory: str | Path) -> None:
         path = Path(save_directory)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.mkdir(parents=True, exist_ok=True)
 
         save_model(self.model, str(path / "model.safetensors"))
         with open(path / "config.json", "w") as f:

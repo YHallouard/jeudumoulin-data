@@ -1,10 +1,15 @@
 import json
+import shutil
+import tempfile
+import uuid
 from inspect import Traceback
 from pathlib import Path
 from typing import Any
 
 import mlflow
 import structlog
+from mlflow.models import Model
+from mlflow.models.model import MLMODEL_FILE_NAME
 
 logger = structlog.get_logger(__name__)
 
@@ -77,7 +82,18 @@ class MLflowLogger:
         if not self._active:
             return
         try:
-            mlflow.log_artifacts(str(model_dir), artifact_path="model")
+            model_dir_path = Path(model_dir)
+            with tempfile.TemporaryDirectory() as staging:
+                staging_path = Path(staging)
+                for item in model_dir_path.iterdir():
+                    dest = staging_path / item.name
+                    if item.is_dir():
+                        shutil.copytree(item, dest)
+                    else:
+                        shutil.copy2(item, dest)
+                mlflow_model = Model(artifact_path="model", flavors={}, model_uuid=uuid.uuid4().hex)
+                mlflow_model.save(staging_path / MLMODEL_FILE_NAME)
+                mlflow.log_artifacts(str(staging_path), artifact_path="model")
             model_uri = f"runs:/{self.run.info.run_id}/model"
             mlflow.register_model(model_uri, registered_model_name)
             logger.info(

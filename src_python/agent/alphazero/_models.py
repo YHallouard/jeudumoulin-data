@@ -1,3 +1,5 @@
+from typing import Literal
+
 import torch
 import torch.nn as nn
 from pydantic import BaseModel
@@ -13,7 +15,7 @@ class MLPDualNetConfig(BaseModel):
         dropout_rate: float = 0.2
         output_dim: int = 1
 
-    model_type: str = "mlp_dual_net"
+    model_type: Literal["mlp_dual_net"] = "mlp_dual_net"
     backbone: BackboneConfig
     policy_head: ConditionalPolicyHeadConfig
     value_head: ValueHeadConfig
@@ -38,13 +40,9 @@ class MLPDualNet(Model):
             nn.Tanh(),
         )
 
-        self._device: torch.device | None = None
-
     @property
     def device(self) -> torch.device:
-        if self._device is None:
-            self._device = next(self.parameters()).device
-        return self._device
+        return next(self.parameters()).device
 
     def policy_value(
         self, state_embedding: list[float], legal_moves: list[list[int | None]]

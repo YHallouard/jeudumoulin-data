@@ -1,9 +1,13 @@
-from typing import Literal
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal
 
 import boto3
-from mypy_boto3_s3 import S3Client
 from pydantic import BaseModel
 from settings import settings
+
+if TYPE_CHECKING:
+    from mypy_boto3_s3 import S3Client
 
 
 class MinioStorageConfig(BaseModel):

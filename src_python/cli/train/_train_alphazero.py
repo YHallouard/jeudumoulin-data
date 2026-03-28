@@ -1,13 +1,13 @@
 import tempfile
 from functools import singledispatch
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 import structlog
 from agent.alphazero import AlphaZeroAgent, AlphaZeroTrainer
 from agent.alphazero._agent import AlphaZeroAgentConfig
 from agent.alphazero._trainer import LRSchedulerConfig
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from utils.checkpoints import CheckpointHandler, CheckpointStorageConfig, S3CheckpointStorage, get_checkpoint_handler
 
 logger = structlog.get_logger()
@@ -39,20 +39,17 @@ class S3CheckpointInit(BaseModel):
     start_iteration: int = 0
 
 
-TrainingInitConfig = Annotated[
-    NewModelInit | LocalCheckpointInit | S3CheckpointInit,
-    Field(discriminator="strategy"),
-]
+TrainingInitConfig = NewModelInit | LocalCheckpointInit | S3CheckpointInit
 
 
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------------
 # Agent factory — CLI path (no S3)
 # ---------------------------------------------------------------------------
 
 
 @singledispatch
 def _create_agent_from_init(config: Any, **kwargs: Any) -> AlphaZeroAgent:
-    raise NotImplementedError(f"Unsupported init strategy for CLI: {config.strategy}")  # noqa: TRY003
+    raise NotImplementedError(f"Unsupported init strategy for CLI: {config.strategy}")
 
 
 @_create_agent_from_init.register(NewModelInit)
@@ -92,7 +89,6 @@ class TrainAlphazeroConfig(BaseModel):
         learning_rate: float
         lr_scheduler_config: LRSchedulerConfig
         temperature: float
-        save_folder: Path
         save_frequency: int
         eval_frequency: int
         verbose: bool = True
@@ -110,7 +106,8 @@ class TrainAlphazeroConfig(BaseModel):
 
 def train_alphazero(config: TrainAlphazeroConfig) -> None:
     training_config = config.training
-    agent = _create_agent_from_init(config.init)
+    handler = get_checkpoint_handler(config.checkpoint_storage)
+    agent = _create_agent_from_init(config.init, handler=handler)
     trainer = AlphaZeroTrainer(
         agent=agent,
         lr_scheduler_config=training_config.lr_scheduler_config,
@@ -126,20 +123,8 @@ def train_alphazero(config: TrainAlphazeroConfig) -> None:
         max_episode_steps=training_config.max_episode_steps,
         epochs_per_iteration=training_config.epochs,
         temperature=training_config.temperature,
-        save_folder=training_config.save_folder,
-        checkpoint_path=None,
+        checkpoint_handler=handler,
         save_frequency=training_config.save_frequency,
         eval_frequency=training_config.eval_frequency,
         verbose=training_config.verbose,
     )
-
-    final_model_path = training_config.save_folder / "final_model.safetensors"
-    agent.save_pretrained(final_model_path)
-    logger.info("final_model_saved", path=str(final_model_path))
-
-    if training_config.verbose:
-        print("\n" + "=" * 70)
-        print("AlphaZero Training Complete!")
-        print("=" * 70)
-        print(f"Final model saved to: {final_model_path}")
-        print("=" * 70 + "\n")

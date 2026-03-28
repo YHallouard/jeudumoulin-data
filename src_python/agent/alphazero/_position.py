@@ -1,4 +1,5 @@
 from functools import singledispatch
+from typing import Literal
 
 import numpy as np
 import torch
@@ -7,7 +8,7 @@ from pydantic import BaseModel
 
 
 class ClassicEmbeddingConfig(BaseModel):
-    model_type: str = "classic_embedding"
+    model_type: Literal["classic_embedding"] = "classic_embedding"
     embedding_dim: int = 32
 
 
@@ -24,7 +25,7 @@ class ClassicEmbedding(nn.Module):
 
 
 class PositionalEmbeddingConfig(BaseModel):
-    model_type: str = "positional_embedding"
+    model_type: Literal["positional_embedding"] = "positional_embedding"
     embedding_dim: int = 32
 
 

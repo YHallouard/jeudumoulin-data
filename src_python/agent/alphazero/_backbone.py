@@ -1,5 +1,6 @@
 import copy
 from functools import singledispatch
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -7,7 +8,7 @@ from pydantic import BaseModel
 
 
 class MLPBackboneConfig(BaseModel):
-    model_type: str = "mlp_backbone"
+    model_type: Literal["mlp_backbone"] = "mlp_backbone"
     input_dim: int = 77
     num_layers: int = 2
     hidden_dim: int = 256
@@ -77,7 +78,7 @@ class GraphConvLayer(nn.Module):
 
 
 class GraphConvBackboneConfig(BaseModel):
-    model_type: str = "graph_conv_backbone"
+    model_type: Literal["graph_conv_backbone"] = "graph_conv_backbone"
     player_embedding_dim: int = 16
     phase_embedding_dim: int = 16
     board_embedding_dim: int = 128

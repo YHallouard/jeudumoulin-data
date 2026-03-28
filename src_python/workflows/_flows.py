@@ -62,6 +62,7 @@ class BufferStatistics(BaseModel):
     fill_ratio: float
     avg_value: float
 
+
 class EvaluateAlphazeroInputs(BaseModel):
     agent_config: AlphaZeroAgentConfig
     weights_key: str
@@ -72,22 +73,27 @@ class EvaluateAlphazeroInputs(BaseModel):
     num_games: int = 50
     opponent_simulations: int = 2000
 
+
 class TrainAlphazeroInputs(BaseModel):
     config: TrainAlphazeroConfig
-    mlflow_tracking_uri: str
+    mlflow_tracking_uri: str = DEFAULT_MLFLOW_TRACKING_URI
+
 
 class AlphaZeroTrainingResult(BaseModel):
     buffer_size: int
     buffer_statistics: BufferStatistics
+
 
 class DQNWinCounts(BaseModel):
     agent: int
     opponent: int
     draw: int
 
+
 class TrainDQNInputs(BaseModel):
     config: TrainDQNConfig
     mlflow_tracking_uri: str
+
 
 class DQNTrainingResult(BaseModel):
     episode_rewards: list[float]
@@ -154,7 +160,9 @@ def evaluate_alphazero_flow(inputs: EvaluateAlphazeroInputs) -> EvaluateMetrics:
         mlflow_experiment="alphazero",
     )
 
-    eval_metrics = evaluate_task(trainer, num_games=inputs.num_games, opponent_simulations=inputs.opponent_simulations, verbose=True)
+    eval_metrics = evaluate_task(
+        trainer, num_games=inputs.num_games, opponent_simulations=inputs.opponent_simulations, verbose=True
+    )
 
     mlflow.set_tracking_uri(inputs.mlflow_tracking_uri)
     with mlflow.start_run(run_id=inputs.mlflow_run_id):
@@ -175,11 +183,12 @@ def evaluate_alphazero_flow(inputs: EvaluateAlphazeroInputs) -> EvaluateMetrics:
 @flow(name="train-alphazero", log_prints=True)
 def train_alphazero_flow(inputs: TrainAlphazeroInputs) -> AlphaZeroTrainingResult:
     device = detect_compute_device()
-    config = inputs.config.model_copy(update={"init": inputs.config.init.model_copy(update={"device": device})})
+    config = inputs.config
+    init_config = config.init.model_copy(update={"device": device})
     training = config.training
 
     handler = get_checkpoint_handler(config.checkpoint_storage)
-    trainer, start_iteration = _create_trainer(config.init, training, inputs.mlflow_tracking_uri, handler)
+    trainer, start_iteration = _create_trainer(init_config, training, inputs.mlflow_tracking_uri, handler)
 
     start_mlflow_task(
         trainer,

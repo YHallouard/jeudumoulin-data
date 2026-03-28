@@ -1,4 +1,5 @@
 from functools import singledispatch
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -15,7 +16,7 @@ def conditional_cross_entropy(pred_probs: torch.Tensor, target_probs: torch.Tens
 
 
 class SemiConditionalPolicyHeadConfig(BaseModel):
-    model_type: str = "semi_conditional_policy_head"
+    model_type: Literal["semi_conditional_policy_head"] = "semi_conditional_policy_head"
     state_embedding_dim: int = 128
     embedding: EmbeddingConfig
     from_head_hidden_dim: int = 128
@@ -27,7 +28,7 @@ class SemiConditionalPolicyHeadConfig(BaseModel):
 
 
 class FullyConditionalPolicyHeadConfig(BaseModel):
-    model_type: str = "fully_conditional_policy_head"
+    model_type: Literal["fully_conditional_policy_head"] = "fully_conditional_policy_head"
     state_embedding_dim: int = 128
     embedding: EmbeddingConfig
     from_head_hidden_dim: int = 128
@@ -39,7 +40,7 @@ class FullyConditionalPolicyHeadConfig(BaseModel):
 
 
 class GatedConditionalPolicyHeadConfig(BaseModel):
-    model_type: str = "gated_conditional_policy_head"
+    model_type: Literal["gated_conditional_policy_head"] = "gated_conditional_policy_head"
     state_embedding_dim: int = 512
     embedding: EmbeddingConfig
     hidden_dim: int = 512

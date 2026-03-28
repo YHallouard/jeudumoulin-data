@@ -22,7 +22,6 @@ config:
     temperature: 1.0
     save_frequency: 10
     eval_frequency: 10
-    save_folder: models/alphazero
     verbose: true
 
 # Checkpoint storage (default: s3). Use local for dev:
