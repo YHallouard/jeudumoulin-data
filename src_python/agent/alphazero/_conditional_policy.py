@@ -9,10 +9,44 @@ from pydantic import BaseModel
 from agent.alphazero._position import EmbeddingConfig, get_embedding
 
 
-def conditional_cross_entropy(pred_probs: torch.Tensor, target_probs: torch.Tensor) -> torch.Tensor:
-    epsilon = 1e-8
-    pred_probs_safe = torch.clamp(pred_probs, epsilon, 1.0 - epsilon)
-    return -torch.sum(target_probs * torch.log(pred_probs_safe))
+def _create_from_mask(legal_actions: list[list[int | None]], device: torch.device) -> torch.Tensor:
+    mask = torch.full((25,), float("-inf"), device=device)
+    for action in legal_actions:
+        from_idx = action[0] if action[0] is not None else 24
+        mask[from_idx] = 0.0
+    return mask
+
+
+def _create_batch_to_mask(legal_actions: list[list[int | None]], device: torch.device) -> torch.Tensor:
+    num_actions = len(legal_actions)
+    mask = torch.full((num_actions, 24), float("-inf"), device=device)
+    from_to_map: dict[int, set[int]] = {}
+    for action in legal_actions:
+        from_idx = action[0] if action[0] is not None else 24
+        to_idx = action[1] if action[1] is not None else 0
+        from_to_map.setdefault(from_idx, set()).add(to_idx)
+    for i, action in enumerate(legal_actions):
+        from_idx = action[0] if action[0] is not None else 24
+        for to_idx in from_to_map[from_idx]:
+            mask[i, to_idx] = 0.0
+    return mask
+
+
+def _create_batch_remove_mask(legal_actions: list[list[int | None]], device: torch.device) -> torch.Tensor:
+    num_actions = len(legal_actions)
+    mask = torch.full((num_actions, 25), float("-inf"), device=device)
+    pair_remove_map: dict[tuple[int, int], set[int]] = {}
+    for action in legal_actions:
+        from_idx = action[0] if action[0] is not None else 24
+        to_idx = action[1] if action[1] is not None else 0
+        remove_idx = action[2] if action[2] is not None else 24
+        pair_remove_map.setdefault((from_idx, to_idx), set()).add(remove_idx)
+    for i, action in enumerate(legal_actions):
+        from_idx = action[0] if action[0] is not None else 24
+        to_idx = action[1] if action[1] is not None else 0
+        for remove_idx in pair_remove_map[(from_idx, to_idx)]:
+            mask[i, remove_idx] = 0.0
+    return mask
 
 
 class SemiConditionalPolicyHeadConfig(BaseModel):
@@ -141,88 +175,26 @@ class SemiConditionalPolicyHead(nn.Module):
 
         state_emb_expanded = state_embedding.unsqueeze(0).expand(num_actions, -1)
         to_inputs = torch.cat([state_emb_expanded, from_embs], dim=-1)
-        to_logits_all = self.to_head(to_inputs)
+        to_logits_all = self.to_head(to_inputs)  # [num_actions, 24]
 
-        remove_logits = self.remove_head(state_embedding)
+        remove_logits = self.remove_head(state_embedding)  # [25]
+        remove_logits_all = remove_logits.unsqueeze(0).expand(num_actions, -1)  # [num_actions, 25]
 
-        from_mask = self._create_from_mask(legal_actions, device)
+        from_mask = _create_from_mask(legal_actions, device)
         from_log_probs_all = F.log_softmax(from_logits + from_mask, dim=0)
         from_log_probs = from_log_probs_all[from_indices_tensor]
 
-        to_log_probs_per_action = []
-        unique_froms = torch.unique(from_indices_tensor)
+        to_batch_mask = _create_batch_to_mask(legal_actions, device)
+        to_log_probs_all = F.log_softmax(to_logits_all + to_batch_mask, dim=1)
+        to_log_probs = to_log_probs_all.gather(1, to_indices_tensor.unsqueeze(1)).squeeze(1)
 
-        for from_idx_tensor in unique_froms:
-            from_idx_int: int = int(from_idx_tensor.item())
-            mask_for_this_from = from_indices_tensor == from_idx_tensor
-            indices_for_this_from = torch.where(mask_for_this_from)[0]
-
-            to_positions_for_this_from = to_indices_tensor[indices_for_this_from]
-            to_logits_for_this_from = to_logits_all[indices_for_this_from]
-
-            to_mask = self._create_to_mask_given_from(legal_actions, from_idx_int, device)
-
-            to_log_probs_all = F.log_softmax(to_logits_for_this_from.mean(dim=0) + to_mask, dim=0)
-
-            to_log_probs_for_actions = to_log_probs_all[to_positions_for_this_from]
-
-            for i, global_idx in enumerate(indices_for_this_from):
-                to_log_probs_per_action.append((global_idx.item(), to_log_probs_for_actions[i]))
-
-        to_log_probs_per_action.sort(key=lambda x: x[0])
-        to_log_probs = torch.stack([lp for _, lp in to_log_probs_per_action])
-
-        remove_mask = self._create_remove_mask(legal_actions, device)
-        remove_log_probs_all = F.log_softmax(remove_logits + remove_mask, dim=0)
-        remove_log_probs = remove_log_probs_all[remove_indices_tensor]
+        remove_batch_mask = _create_batch_remove_mask(legal_actions, device)
+        remove_log_probs_all = F.log_softmax(remove_logits_all + remove_batch_mask, dim=1)
+        remove_log_probs = remove_log_probs_all.gather(1, remove_indices_tensor.unsqueeze(1)).squeeze(1)
 
         log_probs = from_log_probs + to_log_probs + remove_log_probs
 
-        probs = F.softmax(log_probs, dim=0)
-
-        return probs
-
-    def _create_from_mask(self, legal_actions: list[list[int | None]], device: torch.device) -> torch.Tensor:
-        mask = torch.full((25,), float("-inf"), device=device)
-
-        from_positions = set()
-        for action in legal_actions:
-            from_idx = action[0] if action[0] is not None else 24
-            from_positions.add(from_idx)
-
-        for pos in from_positions:
-            mask[pos] = 0.0
-
-        return mask
-
-    def _create_to_mask_given_from(
-        self, legal_actions: list[list[int | None]], from_position: int, device: torch.device
-    ) -> torch.Tensor:
-        mask = torch.full((24,), float("-inf"), device=device)
-
-        to_positions = set()
-        for action in legal_actions:
-            action_from = action[0] if action[0] is not None else 24
-            if action_from == from_position:
-                to_positions.add(action[1])
-
-        for pos in to_positions:
-            mask[pos] = 0.0
-
-        return mask
-
-    def _create_remove_mask(self, legal_actions: list[list[int | None]], device: torch.device) -> torch.Tensor:
-        mask = torch.full((25,), float("-inf"), device=device)
-
-        remove_positions = set()
-        for action in legal_actions:
-            remove_idx = action[2] if action[2] is not None else 24
-            remove_positions.add(remove_idx)
-
-        for pos in remove_positions:
-            mask[pos] = 0.0
-
-        return mask
+        return F.log_softmax(log_probs, dim=0)
 
 
 class FullyConditionalPolicyHead(nn.Module):
@@ -297,111 +269,26 @@ class FullyConditionalPolicyHead(nn.Module):
         state_emb_expanded = state_embedding.unsqueeze(0).expand(num_actions, -1)
 
         to_inputs = torch.cat([state_emb_expanded, from_embs], dim=-1)
-        to_logits_all = self.to_head(to_inputs)
+        to_logits_all = self.to_head(to_inputs)  # [num_actions, 24]
 
         remove_inputs = torch.cat([state_emb_expanded, from_embs, to_embs], dim=-1)
-        remove_logits_all = self.remove_head(remove_inputs)
+        remove_logits_all = self.remove_head(remove_inputs)  # [num_actions, 25]
 
-        from_mask = self._create_from_mask(legal_actions, device)
+        from_mask = _create_from_mask(legal_actions, device)
         from_log_probs_all = F.log_softmax(from_logits + from_mask, dim=0)
         from_log_probs = from_log_probs_all[from_indices_tensor]
 
-        to_log_probs_per_action = []
-        unique_froms = torch.unique(from_indices_tensor)
+        to_batch_mask = _create_batch_to_mask(legal_actions, device)
+        to_log_probs_all = F.log_softmax(to_logits_all + to_batch_mask, dim=1)
+        to_log_probs = to_log_probs_all.gather(1, to_indices_tensor.unsqueeze(1)).squeeze(1)
 
-        for from_idx_tensor in unique_froms:
-            from_idx_int: int = int(from_idx_tensor.item())
-            mask_for_this_from = from_indices_tensor == from_idx_tensor
-            indices_for_this_from = torch.where(mask_for_this_from)[0]
-
-            to_positions_for_this_from = to_indices_tensor[indices_for_this_from]
-            to_logits_for_this_from = to_logits_all[indices_for_this_from]
-
-            to_mask = self._create_to_mask_given_from(legal_actions, from_idx_int, device)
-
-            to_log_probs_all = F.log_softmax(to_logits_for_this_from.mean(dim=0) + to_mask, dim=0)
-
-            to_log_probs_for_actions = to_log_probs_all[to_positions_for_this_from]
-
-            for i, global_idx in enumerate(indices_for_this_from):
-                to_log_probs_per_action.append((global_idx.item(), to_log_probs_for_actions[i]))
-
-        to_log_probs_per_action.sort(key=lambda x: x[0])
-        to_log_probs = torch.stack([lp for _, lp in to_log_probs_per_action])
-
-        remove_log_probs_per_action = []
-        unique_from_to_pairs = set(zip(from_indices, to_indices))
-
-        for from_idx, to_idx in unique_from_to_pairs:
-            mask_for_this_pair = (from_indices_tensor == from_idx) & (to_indices_tensor == to_idx)
-            indices_for_this_pair = torch.where(mask_for_this_pair)[0]
-
-            remove_positions_for_this_pair = remove_indices_tensor[indices_for_this_pair]
-            remove_logits_for_this_pair = remove_logits_all[indices_for_this_pair]
-
-            remove_mask = self._create_remove_mask_given_from_to(legal_actions, from_idx, to_idx, device)
-
-            remove_log_probs_all = F.log_softmax(remove_logits_for_this_pair.mean(dim=0) + remove_mask, dim=0)
-
-            remove_log_probs_for_actions = remove_log_probs_all[remove_positions_for_this_pair]
-
-            for i, global_idx in enumerate(indices_for_this_pair):
-                remove_log_probs_per_action.append((global_idx.item(), remove_log_probs_for_actions[i]))
-
-        remove_log_probs_per_action.sort(key=lambda x: x[0])
-        remove_log_probs = torch.stack([lp for _, lp in remove_log_probs_per_action])
+        remove_batch_mask = _create_batch_remove_mask(legal_actions, device)
+        remove_log_probs_all = F.log_softmax(remove_logits_all + remove_batch_mask, dim=1)
+        remove_log_probs = remove_log_probs_all.gather(1, remove_indices_tensor.unsqueeze(1)).squeeze(1)
 
         log_probs = from_log_probs + to_log_probs + remove_log_probs
 
-        probs = F.softmax(log_probs, dim=0)
-
-        return probs
-
-    def _create_from_mask(self, legal_actions: list[list[int | None]], device: torch.device) -> torch.Tensor:
-        mask = torch.full((25,), float("-inf"), device=device)
-
-        from_positions = set()
-        for action in legal_actions:
-            from_idx = action[0] if action[0] is not None else 24
-            from_positions.add(from_idx)
-
-        for pos in from_positions:
-            mask[pos] = 0.0
-
-        return mask
-
-    def _create_to_mask_given_from(
-        self, legal_actions: list[list[int | None]], from_position: int, device: torch.device
-    ) -> torch.Tensor:
-        mask = torch.full((24,), float("-inf"), device=device)
-
-        to_positions = set()
-        for action in legal_actions:
-            action_from = action[0] if action[0] is not None else 24
-            if action_from == from_position:
-                to_positions.add(action[1])
-
-        for pos in to_positions:
-            mask[pos] = 0.0
-
-        return mask
-
-    def _create_remove_mask_given_from_to(
-        self, legal_actions: list[list[int | None]], from_position: int, to_position: int, device: torch.device
-    ) -> torch.Tensor:
-        mask = torch.full((25,), float("-inf"), device=device)
-
-        remove_positions = set()
-        for action in legal_actions:
-            action_from = action[0] if action[0] is not None else 24
-            if action_from == from_position and action[1] == to_position:
-                remove_idx = action[2] if action[2] is not None else 24
-                remove_positions.add(remove_idx)
-
-        for pos in remove_positions:
-            mask[pos] = 0.0
-
-        return mask
+        return F.log_softmax(log_probs, dim=0)
 
 
 class GatedBlock(nn.Module):
@@ -446,7 +333,7 @@ class GatedConditionalPolicyHead(nn.Module):
 
         self.remove_gate = GatedBlock(
             input_dim=config.state_embedding_dim,
-            condition_dim=emb_dim,
+            condition_dim=emb_dim * 2,  # concatenation of from + to embeddings
             hidden_dim=config.hidden_dim,
             dropout=config.dropout_rate,
         )
@@ -455,19 +342,19 @@ class GatedConditionalPolicyHead(nn.Module):
         self._init_weights()
 
     def _init_weights(self) -> None:
-        for module in [self.from_head]:
-            for layer in module:
-                if isinstance(layer, nn.Linear):
-                    nn.init.xavier_uniform_(layer.weight, gain=0.5)
-                    if layer.bias is not None:
-                        nn.init.constant_(layer.bias, 0.0)
-
+        linear_layers: list[nn.Linear] = []
+        for layer in self.from_head:
+            if isinstance(layer, nn.Linear):
+                linear_layers.append(layer)
         for gated_module in [self.to_gate, self.remove_gate]:
             for layer in gated_module.modules():
                 if isinstance(layer, nn.Linear):
-                    nn.init.xavier_uniform_(layer.weight, gain=0.5)
-                    if layer.bias is not None:
-                        nn.init.constant_(layer.bias, 0.0)
+                    linear_layers.append(layer)
+        linear_layers.extend([self.to_output, self.remove_output])
+        for layer in linear_layers:
+            nn.init.xavier_uniform_(layer.weight, gain=0.5)
+            if layer.bias is not None:
+                nn.init.constant_(layer.bias, 0.0)
 
     def forward(self, state_embedding: torch.Tensor, legal_actions: list[list[int | None]]) -> torch.Tensor:
         device = state_embedding.device
@@ -503,88 +390,22 @@ class GatedConditionalPolicyHead(nn.Module):
         to_features = self.to_gate(state_emb_expanded, from_embs)  # [num_actions, hidden_dim]
         to_logits_all = self.to_output(to_features)  # [num_actions, 24]
 
-        move_condition = from_embs + to_embs  # [num_actions, embedding_dim]
+        move_condition = torch.cat([from_embs, to_embs], dim=-1)  # [num_actions, embedding_dim * 2]
         remove_features = self.remove_gate(state_emb_expanded, move_condition)  # [num_actions, hidden_dim]
         remove_logits_all = self.remove_output(remove_features)  # [num_actions, 25]
 
-        from_mask = self._create_from_mask(legal_actions, device)  # [25]
-        from_log_probs_all = F.log_softmax(from_logits + from_mask, dim=0)  # [num_actions, 25]
+        from_mask = _create_from_mask(legal_actions, device)  # [25]
+        from_log_probs_all = F.log_softmax(from_logits + from_mask, dim=0)  # [25]
         from_log_probs = from_log_probs_all[from_indices_tensor]  # [num_actions]
 
-        # Vectorized To Probabilities
-        to_batch_mask = self._create_batch_to_mask(legal_actions, device)
+        to_batch_mask = _create_batch_to_mask(legal_actions, device)
         to_log_probs_all = F.log_softmax(to_logits_all + to_batch_mask, dim=1)
         to_log_probs = to_log_probs_all.gather(1, to_indices_tensor.unsqueeze(1)).squeeze(1)
 
-        # Vectorized Remove Probabilities
-        remove_batch_mask = self._create_batch_remove_mask(legal_actions, device)
+        remove_batch_mask = _create_batch_remove_mask(legal_actions, device)
         remove_log_probs_all = F.log_softmax(remove_logits_all + remove_batch_mask, dim=1)
         remove_log_probs = remove_log_probs_all.gather(1, remove_indices_tensor.unsqueeze(1)).squeeze(1)
 
         log_probs = from_log_probs + to_log_probs + remove_log_probs
 
-        probs = F.softmax(log_probs, dim=0)
-
-        return probs
-
-    def _create_batch_to_mask(self, legal_actions: list[list[int | None]], device: torch.device) -> torch.Tensor:
-        num_actions = len(legal_actions)
-        mask = torch.full((num_actions, 24), float("-inf"), device=device)
-
-        # Pre-compute valid 'to's for each 'from'
-        from_to_map: dict[int, set[int]] = {}
-        for action in legal_actions:
-            from_idx = action[0] if action[0] is not None else 24
-            to_idx = action[1] if action[1] is not None else 0
-            if from_idx not in from_to_map:
-                from_to_map[from_idx] = set()
-            from_to_map[from_idx].add(to_idx)
-
-        # Fill mask
-        for i, action in enumerate(legal_actions):
-            from_idx = action[0] if action[0] is not None else 24
-            valid_tos = from_to_map[from_idx]
-            for to_idx in valid_tos:
-                mask[i, to_idx] = 0.0
-
-        return mask
-
-    def _create_batch_remove_mask(self, legal_actions: list[list[int | None]], device: torch.device) -> torch.Tensor:
-        num_actions = len(legal_actions)
-        mask = torch.full((num_actions, 25), float("-inf"), device=device)
-
-        # Pre-compute valid 'remove's for each '(from, to)' pair
-        pair_remove_map: dict[tuple[int, int], set[int]] = {}
-        for action in legal_actions:
-            from_idx = action[0] if action[0] is not None else 24
-            to_idx = action[1] if action[1] is not None else 0
-            remove_idx = action[2] if action[2] is not None else 24
-
-            pair = (from_idx, to_idx)
-            if pair not in pair_remove_map:
-                pair_remove_map[pair] = set()
-            pair_remove_map[pair].add(remove_idx)
-
-        # Fill mask
-        for i, action in enumerate(legal_actions):
-            from_idx = action[0] if action[0] is not None else 24
-            to_idx = action[1] if action[1] is not None else 0
-            pair = (from_idx, to_idx)
-            valid_removes = pair_remove_map[pair]
-            for remove_idx in valid_removes:
-                mask[i, remove_idx] = 0.0
-
-        return mask
-
-    def _create_from_mask(self, legal_actions: list[list[int | None]], device: torch.device) -> torch.Tensor:
-        mask = torch.full((25,), float("-inf"), device=device)
-
-        from_positions = set()
-        for action in legal_actions:
-            from_idx = action[0] if action[0] is not None else 24
-            from_positions.add(from_idx)
-
-        for pos in from_positions:
-            mask[pos] = 0.0
-
-        return mask
+        return F.log_softmax(log_probs, dim=0)

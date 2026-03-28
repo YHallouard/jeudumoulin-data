@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 import jdm_ru
 import structlog
 import torch
+import torch.nn.functional as F
 from jdm_ru import generate_train_examples
 from monitoring import MLflowLogger
 from prefect import task
@@ -19,7 +20,6 @@ from tqdm import tqdm  # type: ignore[import-untyped]
 from agent.alphazero.random_agent import RandomAgent
 
 from ._agent import AlphaZeroAgent
-from ._conditional_policy import conditional_cross_entropy
 from ._replay_buffer import AlphaZeroReplayBuffer
 
 if TYPE_CHECKING:
@@ -328,33 +328,32 @@ class AlphaZeroTrainer:
     ) -> tuple[float, float, float]:
         self.optimizer.zero_grad()
 
-        batch_policy_loss = 0.0
-        batch_value_loss = 0.0
         batch_size = len(state_embeddings)
+        policies, values = self.agent.model.policy_value_batch(state_embeddings, legal_moves_batch)
 
-        for state_emb, legal_moves, policy_target, value_target in zip(
-            state_embeddings, legal_moves_batch, policy_targets, value_targets
+        batch_policy_loss = torch.tensor(0.0, device=values.device)
+        batch_value_loss = torch.tensor(0.0, device=values.device)
+
+        for policy_log_probs, policy_target, value_pred, value_target in zip(
+            policies, policy_targets, values, value_targets
         ):
-            policy_pred, value_pred = self.agent.model.policy_value(state_emb, legal_moves)
-
-            policy_target_tensor = torch.tensor(policy_target, device=policy_pred.device)
-            policy_loss = conditional_cross_entropy(policy_pred, policy_target_tensor)
+            policy_target_tensor = torch.tensor(policy_target, device=policy_log_probs.device)
+            policy_loss = -torch.sum(policy_target_tensor * policy_log_probs)
 
             value_target_tensor = torch.tensor([value_target], device=value_pred.device)
-            value_loss = torch.nn.functional.mse_loss(value_pred, value_target_tensor)
+            value_loss = F.mse_loss(value_pred, value_target_tensor)
 
-            total_loss = policy_loss + value_loss
-            total_loss.backward()
+            batch_policy_loss = batch_policy_loss + policy_loss
+            batch_value_loss = batch_value_loss + value_loss
 
-            batch_policy_loss += policy_loss.item()
-            batch_value_loss += value_loss.item()
-
+        total_loss = (batch_policy_loss + batch_value_loss) / batch_size
+        total_loss.backward()
         self.optimizer.step()
 
         return (
-            batch_policy_loss / batch_size,
-            batch_value_loss / batch_size,
-            (batch_policy_loss + batch_value_loss) / batch_size,
+            batch_policy_loss.item() / batch_size,
+            batch_value_loss.item() / batch_size,
+            total_loss.item(),
         )
 
     def evaluate(

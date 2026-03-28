@@ -37,7 +37,8 @@ class AlphaZeroAgent(Agent):
 
             results: list[tuple[dict[int, float], float]] = []
             for i, policy in enumerate(policies):
-                policy_cpu = policy.cpu() if needs_cpu else policy
+                policy_probs = torch.exp(policy)
+                policy_cpu = policy_probs.cpu() if needs_cpu else policy_probs
                 policy_dict = {j: float(policy_cpu[j].item()) for j in range(len(legal_moves_batch[i]))}
                 value_float = float(values[i].squeeze().item())
                 results.append((policy_dict, value_float))
